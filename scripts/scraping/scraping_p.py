@@ -18,7 +18,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
-import pandas as pd
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -153,7 +152,6 @@ PROXY_ROTATE_EVERY = site_config.PROXY_ROTATE_EVERY
 db_path = site_config.DB_PATH
 cookie_file = site_config.COOKIE_FILE
 output_root = site_config.SITE_OUTPUT_DIR
-export_root = site_config.SITE_EXPORT_DIR
 
 table_name = TABLE_NAME
 start_time = time.time()
@@ -170,16 +168,6 @@ webp_dir.mkdir(
     exist_ok=True,
 )
 
-# CSV・Excel出力先:
-# detapachi/export/<site>/<YYYYMMDD>/
-export_date_dir = export_root / today
-export_date_dir.mkdir(
-    parents=True,
-    exist_ok=True,
-)
-
-csv_path = export_date_dir / "scraping.csv"
-excel_path = export_date_dir / "scraping.xlsx"
 
 # 1台ごとにスクショ保存する複数要素
 SCREENSHOT_TARGETS = [
@@ -1721,7 +1709,6 @@ def wait_for_update_date(
 
 # ========= メインループ =========
 batch_size = BATCH_SIZE
-data_list = []
 sku_seq = get_starting_sku_seq(
     conn,
     table_name,
@@ -2753,10 +2740,6 @@ for batch_start in range(
                     f"err={db_error!r}"
                 )
 
-        # CSV・Excel出力用
-        data_list.append(
-            data_entry
-        )
 
     # ==================================================
     # バッチ終了
@@ -2794,31 +2777,9 @@ for batch_start in range(
 
     time.sleep(5)
 
-# === CSV/Excel 出力（任意。DB保存とは独立） ===
-try:
-    df = pd.DataFrame(data_list)
-    print(f"収集完了: {len(df)} 件")
-
-    df.to_csv(
-        csv_path,
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    df.to_excel(
-        excel_path,
-        index=False,
-    )
-
-    print(f"[CSV] 保存完了: {csv_path}")
-    print(f"[EXCEL] 保存完了: {excel_path}")
-
-except Exception as e:
-    print(f"[CSV/EXCEL出力失敗] {e}")
 
 conn.close()
 print("✅ 毎ループUPSERT＋行ごと最小再起動リトライで完了")
 
 print(f"[IMAGE] WebP保存先: {webp_dir}")
 print(f"[INFO] 完了: {time.time() - start_time:.2f}秒")
-
