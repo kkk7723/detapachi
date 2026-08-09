@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>台番号一覧 | {{ SHOP_NAME }}</title>
+
+    <style>
+        body {
+            font-family: Arial, "Noto Sans JP", sans-serif;
+            margin: 20px;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .summary {
+            text-align: center;
+            margin-bottom: 24px;
+            color: #555;
+        }
+
+        .machine-list {
+            list-style: none;
+            padding: 0;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .machine-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .machine-item:hover {
+            background-color: #f5f5f5;
+        }
+
+        .machine-image {
+            width: 120px;
+            height: 80px;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+
+        .machine-number {
+            font-size: 22px;
+            font-weight: bold;
+        }
+
+        .machine-number a {
+            color: #333;
+            text-decoration: none;
+        }
+
+        .machine-number a:hover {
+            color: #007acc;
+        }
+
+        .machine-name {
+            margin-top: 5px;
+            color: #444;
+        }
+
+        .machine-date {
+            margin-top: 5px;
+            color: #777;
+            font-size: 13px;
+        }
+
+        .back-link {
+            display: block;
+            margin-top: 30px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>台番号一覧</h1>
+
+    <div class="summary">
+        登録台数：{{ machine_count }}台
+    </div>
+
+    <ul class="machine-list">
+        {% for machine in machines %}
+        <li class="machine-item">
+
+            {% if machine.image_url %}
+            <a href="{{ machine.detail_url }}">
+                <img
+                    src="{{ machine.image_url }}"
+                    alt="{{ machine.machine_number }}番台"
+                    class="machine-image"
+                    loading="lazy"
+                >
+            </a>
+            {% endif %}
+
+            <div>
+                <div class="machine-number">
+                    <a href="{{ machine.detail_url }}">
+                        {{ machine.machine_number }}番台
+                    </a>
+                </div>
+
+                {% if machine.machine_name %}
+                <div class="machine-name">
+                    {{ machine.machine_name }}
+                </div>
+                {% endif %}
+
+                {% if machine.update_datetime %}
+                <div class="machine-date">
+                    更新：{{ machine.update_datetime }}
+                </div>
+                {% elif machine.execution_datetime %}
+                <div class="machine-date">
+                    実行：{{ machine.execution_datetime }}
+                </div>
+                {% endif %}
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+
+    <a
+        href="../index.html"
+        class="back-link"
+    >
+        ← トップへ戻る
+    </a>
+</body>
+</html>

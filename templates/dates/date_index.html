@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>日付一覧 | {{ SHOP_NAME }}</title>
+
+    <link
+        rel="stylesheet"
+        href="../css/common.css"
+    >
+
+    <style>
+        body {
+            font-family: Arial, "Noto Sans JP", sans-serif;
+            margin: 20px;
+            color: #222;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .summary {
+            margin: 10px 0 24px;
+            text-align: center;
+            color: #666;
+        }
+
+        .date-list {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 0;
+            list-style: none;
+        }
+
+        .date-item {
+            margin-bottom: 10px;
+        }
+
+        .date-link {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            color: #333;
+            text-decoration: none;
+            background-color: #fff;
+        }
+
+        .date-link:hover {
+            border-color: #007acc;
+            background-color: #f2f9fd;
+            color: #007acc;
+        }
+
+        .date-value {
+            font-size: 21px;
+            font-weight: bold;
+        }
+
+        .machine-count {
+            font-size: 14px;
+            color: #777;
+        }
+
+        .empty-message {
+            text-align: center;
+            color: #777;
+        }
+
+        .navigation {
+            margin-top: 30px;
+            text-align: center;
+        }
+
+        .navigation a {
+            color: #005fcc;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>日付一覧</h1>
+
+    <div class="summary">
+        登録日数：{{ date_count }}日
+    </div>
+
+    {% if dates %}
+    <ul class="date-list">
+        {% for item in dates %}
+        <li class="date-item">
+            <a
+                href="{{ item.detail_url }}"
+                class="date-link"
+            >
+                <span class="date-value">
+                    {{ item.display_date }}
+                </span>
+
+                <span class="machine-count">
+                    {{ item.machine_count }}台
+                </span>
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-message">
+        表示できる日付がありません。
+    </p>
+    {% endif %}
+
+    <div class="navigation">
+        <a href="../index.html">
+            ← トップへ戻る
+        </a>
+    </div>
+</body>
+</html>

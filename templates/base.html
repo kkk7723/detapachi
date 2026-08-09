@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+{# =========================================
+   基本SEO
+========================================= #}
+
+<title>{{ page_title }}</title>
+
+<meta
+    name="description"
+    content="{{ meta_description }}"
+>
+
+<meta
+    name="robots"
+    content="{{ robots | default('index,follow', true) }}"
+>
+
+<link
+    rel="canonical"
+    href="{{ canonical_url }}"
+>
+
+
+{# =========================================
+   OGP
+========================================= #}
+
+<meta
+    property="og:locale"
+    content="ja_JP"
+>
+
+<meta
+    property="og:type"
+    content="{{ og_type | default('website', true) }}"
+>
+
+<meta
+    property="og:site_name"
+    content="{{ site_name | default('実機相場ナビ', true) }}"
+>
+
+<meta
+    property="og:title"
+    content="{{ page_title }}"
+>
+
+<meta
+    property="og:description"
+    content="{{ meta_description }}"
+>
+
+<meta
+    property="og:url"
+    content="{{ canonical_url }}"
+>
+
+<meta
+    property="og:image"
+    content="{{ og_image }}"
+>
+
+{% if og_image_alt %}
+    <meta
+        property="og:image:alt"
+        content="{{ og_image_alt }}"
+    >
+{% endif %}
+
+
+{# =========================================
+   X（旧Twitter）カード
+========================================= #}
+
+<meta
+    name="twitter:card"
+    content="summary_large_image"
+>
+
+<meta
+    name="twitter:title"
+    content="{{ page_title }}"
+>
+
+<meta
+    name="twitter:description"
+    content="{{ meta_description }}"
+>
+
+<meta
+    name="twitter:image"
+    content="{{ og_image }}"
+>
+
+{% if og_image_alt %}
+    <meta
+        name="twitter:image:alt"
+        content="{{ og_image_alt }}"
+    >
+{% endif %}
+
+
+{# =========================================
+   favicon
+========================================= #}
+
+<link
+    rel="icon"
+    href="{{ favicon_url }}"
+    sizes="any"
+>
+
+<link
+    rel="apple-touch-icon"
+    href="{{ apple_touch_icon_url }}"
+>
+
+
+{# =========================================
+   共通CSS
+========================================= #}
+
+<link
+    rel="stylesheet"
+    href="{{ asset_prefix }}css/common.css"
+>
+
+<link
+    rel="stylesheet"
+    href="{{ asset_prefix }}css/layout.css"
+>
+
+<link
+    rel="stylesheet"
+    href="{{ asset_prefix }}css/sidebar.css"
+>
+
+
+{# =========================================
+   ページ別CSS
+========================================= #}
+
+{% block page_css %}{% endblock %}
+
+
+{# =========================================
+   ページ別head要素
+========================================= #}
+
+{% block head_extra %}{% endblock %}
+
+</head>
+
+<body>
+    <div class="site-wrapper">
+
+    {# =====================================
+       ヘッダー
+
+       グローバルメニューおよび
+       全ページ共通検索フォームを含む
+    ===================================== #}
+
+    {% include "includes/header.html" %}
+
+
+
+    {# =====================================
+       メインコンテンツ
+    ===================================== #}
+
+    <main class="site-main">
+    
+        <div class="site-container">
+
+            {# =====================================
+               パンくず
+            ===================================== #}
+        
+            {% include "includes/breadcrumb.html" %}
+
+    
+            <div class="site-layout">
+    
+                <div class="site-content">
+    
+                    {% block main %}
+                    {% endblock %}
+    
+                </div>
+    
+    
+                {% block sidebar %}
+    
+                    {% include "includes/sidebar.html" %}
+    
+                {% endblock %}
+    
+            </div>
+    
+        </div>
+    
+    </main>
+
+
+    {# =====================================
+       フッター
+    ===================================== #}
+
+    {% include "includes/footer.html" %}
+
+</div>
+
+
+{# =========================================
+   ページ上部へ戻るボタン
+========================================= #}
+
+<button
+    id="scroll-top-button"
+    class="scroll-top-button"
+    type="button"
+    aria-label="ページ上部へ戻る"
+    title="ページ上部へ戻る"
+    hidden
+>
+    <span
+        class="scroll-top-button-icon"
+        aria-hidden="true"
+    >
+        ↑
+    </span>
+</button>
+
+
+{# =========================================
+   全ページ共通JavaScript
+========================================= #}
+
+<script
+    src="{{ asset_prefix }}js/common.js"
+></script>
+
+
+{# =========================================
+   ページ別JavaScript
+========================================= #}
+
+{% block page_js %}{% endblock %}
+
+{# =========================================
+   Google Analytics 4
+========================================= #}
+
+<script
+    async
+    src="https://www.googletagmanager.com/gtag/js?id=G-R8RE862LD7"
+></script>
+
+<script>
+    window.dataLayer = window.dataLayer || [];
+
+    function gtag() {
+        dataLayer.push(arguments);
+    }
+
+    gtag("js", new Date());
+
+    gtag(
+        "config",
+        "G-R8RE862LD7"
+    );
+</script>
+
+{# =========================================
+   A8.net リンクマネージャー
+========================================= #}
+
+<script>
+    window.addEventListener(
+        "load",
+        function () {
+            const script =
+                document.createElement("script");
+
+            script.src =
+                "https://statics.a8.net/a8link/a8linkmgr.js";
+
+            script.async = true;
+
+            script.onload = function () {
+                if (
+                    typeof window.a8linkmgr
+                    === "function"
+                ) {
+                    window.a8linkmgr({
+                        config_id:
+                            "1oJ8VrxEbxERF2LX8ERA"
+                    });
+                }
+            };
+
+            document.body.appendChild(script);
+        }
+    );
+</script>
+
+</body>
+</html>

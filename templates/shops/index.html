@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+
+    <title>{{ SHOP_NAME }}</title>
+
+    <link rel="stylesheet" href="css/common.css">
+
+    <style>
+        body{
+            font-family:Arial,"Noto Sans JP",sans-serif;
+            max-width:900px;
+            margin:40px auto;
+            padding:20px;
+        }
+
+        h1{
+            text-align:center;
+            margin-bottom:10px;
+        }
+
+        .update{
+            text-align:center;
+            color:#777;
+            margin-bottom:40px;
+        }
+
+        .menu{
+            display:grid;
+            gap:20px;
+        }
+
+        .menu a{
+            display:block;
+            padding:20px;
+            border:1px solid #ddd;
+            border-radius:8px;
+            text-decoration:none;
+            color:#333;
+            font-size:22px;
+            transition:.2s;
+        }
+
+        .menu a:hover{
+            background:#f3f8ff;
+            border-color:#4aa3ff;
+        }
+    </style>
+
+</head>
+
+<body>
+
+<h1>{{ SHOP_NAME }}</h1>
+
+<div class="update">
+最終更新：{{ RUN_DATETIME }}
+</div>
+
+<div class="menu">
+
+<a href="machines/index.html">
+台番号一覧
+</a>
+
+<a href="dates/index.html">
+日付一覧
+</a>
+
+</div>
+
+</body>
+</html>

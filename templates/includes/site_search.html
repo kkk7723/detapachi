@@ -1,0 +1,52 @@
+<section
+    class="site-search"
+    aria-label="実機検索"
+>
+    <div class="site-search-inner">
+
+        <form
+            class="site-search-form"
+            action="/machines/"
+            method="get"
+            role="search"
+        >
+            <label
+                for="site-search-keyword"
+                class="visually-hidden"
+            >
+                機種名またはメーカー名を入力
+            </label>
+
+            <div class="site-search-field">
+
+                <span
+                    class="site-search-icon"
+                    aria-hidden="true"
+                >
+                    🔍
+                </span>
+
+                <input
+                    id="site-search-keyword"
+                    class="site-search-input"
+                    type="search"
+                    name="q"
+                    value="{{ search_query | default('', true) }}"
+                    placeholder="機種名・メーカー名で検索"
+                    autocomplete="off"
+                    enterkeyhint="search"
+                >
+
+                <button
+                    class="site-search-button"
+                    type="submit"
+                >
+                    検索
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+</section>

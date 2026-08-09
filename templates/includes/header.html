@@ -1,0 +1,279 @@
+<header class="site-header">
+
+{# =========================================
+   SEO用サイトタイトル
+   画像内の文字だけではなくHTMLにも残す
+========================================= #}
+
+{% if is_top_page %}
+    <h1 class="visually-hidden">
+        実機相場ナビ｜パチンコ・パチスロ中古実機の価格・相場・ランキング
+    </h1>
+{% else %}
+    <p class="visually-hidden">
+        実機相場ナビ
+    </p>
+{% endif %}
+
+
+{# =========================================
+   ヘッダー画像
+========================================= #}
+
+<div class="header-visual">
+
+    <a
+        href="{{ root_prefix }}"
+        class="header-visual-link"
+        aria-label="実機相場ナビ トップページへ"
+    >
+        <picture class="header-picture">
+
+            {# スマートフォン用画像 #}
+            <source
+                media="(max-width: 767px)"
+                srcset="{{ asset_prefix }}img/header-mobile.png"
+            >
+
+            {# PC・タブレット用画像 #}
+            <img
+                src="{{ asset_prefix }}img/header-desktop.png"
+                alt="実機相場ナビ パチンコ・パチスロ中古実機の価格・相場・ランキング"
+                class="header-image"
+                width="1600"
+                height="120"
+                fetchpriority="high"
+                decoding="async"
+            >
+
+        </picture>
+    </a>
+
+</div>
+
+
+{# =========================================
+   ナビゲーション操作部分
+========================================= #}
+
+<div class="header-menu-area">
+
+    <div class="header-inner">
+
+        {# =====================================
+           スマートフォン用検索フォーム
+        ===================================== #}
+
+        <form
+            class="mobile-header-search"
+            action="{{ root_prefix }}machines/"
+            method="get"
+            role="search"
+        >
+            <label
+                for="mobile-header-search-keyword"
+                class="visually-hidden"
+            >
+                機種名またはメーカー名を入力
+            </label>
+
+            <input
+                id="mobile-header-search-keyword"
+                class="mobile-header-search-input"
+                type="search"
+                name="q"
+                value="{{ search_query | default('', true) }}"
+                placeholder="機種名で検索"
+                autocomplete="off"
+                enterkeyhint="search"
+            >
+
+            <button
+                class="mobile-header-search-button"
+                type="submit"
+            >
+                検索
+            </button>
+
+        </form>
+
+
+        {# =====================================
+           スマートフォン用 履歴・お気に入り
+        ===================================== #}
+
+        <div
+            class="mobile-user-actions"
+            aria-label="ユーザーメニュー"
+        >
+
+            <a
+                class="mobile-user-action"
+                href="{{ root_prefix }}history/"
+                aria-label="閲覧履歴を見る"
+            >
+                <span
+                    class="mobile-user-action-icon"
+                    aria-hidden="true"
+                >
+                    ↶
+                </span>
+
+                <span class="mobile-user-action-label">
+                    履歴
+                </span>
+            </a>
+
+
+            <a
+                class="mobile-user-action"
+                href="{{ root_prefix }}favorites/"
+                aria-label="お気に入りを見る"
+            >
+                <span
+                    class="mobile-user-action-icon"
+                    aria-hidden="true"
+                >
+                    ☆
+                </span>
+
+                <span class="mobile-user-action-label">
+                    お気に入り
+                </span>
+            </a>
+
+        </div>
+
+
+        {# =====================================
+           ハンバーガーメニュー
+        ===================================== #}
+
+        <button
+            class="menu-toggle"
+            type="button"
+            aria-label="メニューを開く"
+            aria-expanded="false"
+            aria-controls="global-navigation"
+        >
+            <span
+                class="menu-toggle-line"
+                aria-hidden="true"
+            ></span>
+
+            <span
+                class="menu-toggle-line"
+                aria-hidden="true"
+            ></span>
+
+            <span
+                class="menu-toggle-line"
+                aria-hidden="true"
+            ></span>
+        </button>
+
+    </div>
+
+
+    <nav
+        id="global-navigation"
+        class="global-nav"
+        aria-label="メインナビゲーション"
+    >
+        <div class="global-nav-inner">
+
+            {# =====================================
+               PC用検索フォーム
+            ===================================== #}
+
+            <form
+                class="global-search"
+                action="{{ root_prefix }}machines/"
+                method="get"
+                role="search"
+            >
+                <label
+                    for="global-search-keyword"
+                    class="visually-hidden"
+                >
+                    機種名またはメーカー名を入力
+                </label>
+
+                <input
+                    id="global-search-keyword"
+                    class="global-search-input"
+                    type="search"
+                    name="q"
+                    value="{{ search_query | default('', true) }}"
+                    placeholder="機種名・メーカー名で検索"
+                    autocomplete="off"
+                    enterkeyhint="search"
+                >
+
+                <button
+                    class="global-search-button"
+                    type="submit"
+                >
+                    検索
+                </button>
+
+            </form>
+
+
+            {# =====================================
+               グローバルメニュー
+            ===================================== #}
+
+            <ul class="global-nav-menu">
+
+                <li>
+                    <a href="{{ root_prefix }}machines/">
+                        機種一覧
+                    </a>
+                </li>
+
+                <li>
+                    <a href="{{ root_prefix }}makers/">
+                        メーカー一覧
+                    </a>
+                </li>
+
+                <li>
+                    <a href="{{ root_prefix }}price-down-today/">
+                        本日の値下げ
+                    </a>
+                </li>
+
+                <li>
+                    <a href="{{ root_prefix }}rankings/low-price/">
+                        過去最安価格
+                    </a>
+                </li>
+
+                <li>
+                    <a href="{{ root_prefix }}price-range/">
+                        価格別で探す
+                    </a>
+                </li>
+
+                <li>
+                    <a href="{{ root_prefix }}history/">
+                        閲覧履歴
+                    </a>
+                </li>
+
+                <li>
+                    <a href="{{ root_prefix }}favorites/">
+                        お気に入り
+                    </a>
+                </li>
+
+            </ul>
+
+        </div>
+
+    </nav>
+
+</div>
+
+</header>

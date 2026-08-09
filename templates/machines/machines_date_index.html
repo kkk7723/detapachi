@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>台＋日付 画像ページ一覧</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { margin-bottom: 20px; }
+        ul { list-style: none; padding: 0; }
+        li { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>台＋日付 画像一覧ページ</h1>
+    <ul>
+    {% for machine in machines %}
+        {% for date, cleaned_date in dates %}
+            <li><a href="machines_date/machine_{{ machine }}_{{ cleaned_date }}.html">台 {{ machine }} - {{ date }}</a></li>
+        {% endfor %}
+    {% endfor %}
+    </ul>
+    <p><a href="index.html">← 戻る</a></p>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        {{ display_date }} 台データ一覧 | {{ SHOP_NAME }}
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="../css/common.css"
+    >
+
+    <style>
+        body {
+            font-family: Arial, "Noto Sans JP", sans-serif;
+            margin: 20px;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .summary {
+            margin: 10px 0 20px;
+            text-align: center;
+            color: #555;
+        }
+
+        .table-wrapper {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            min-width: 1000px;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 5px;
+            border: 1px solid #ccc;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background-color: #f0f0f0;
+        }
+
+        tbody tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tbody tr:hover {
+            background-color: #e0f7fa;
+        }
+
+        td a {
+            color: #005fcc;
+            text-decoration: underline;
+        }
+
+        .machine-link {
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        .thumbnail {
+            max-width: 180px;
+            max-height: 100px;
+            border-radius: 4px;
+            object-fit: contain;
+        }
+
+        .empty-value {
+            color: #aaa;
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 25px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>
+        {{ display_date }} 台データ一覧
+    </h1>
+
+    <div class="summary">
+        登録台数：{{ rows | length }}台
+        ／ DB実行日：{{ execution_date }}
+    </div>
+
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    {% for column in columns %}
+                    <th>{{ column }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    {% for column in columns %}
+                    <td>
+                        {% set value = row.get(column) %}
+
+                        {% if value is none or value == "" %}
+                            <span class="empty-value">-</span>
+
+                        {% elif column == "台番号" %}
+                            <a
+                                href="../machines/{{ row.get('台番号ファイル名') }}.html"
+                                class="machine-link"
+                            >
+                                {{ value }}
+                            </a>
+
+                        {% elif column in image_columns
+                            and value is string
+                            and value.startswith("http") %}
+
+                            <a
+                                href="{{ value }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                <img
+                                    src="{{ value }}"
+                                    class="thumbnail"
+                                    alt="{{ column }}"
+                                    loading="lazy"
+                                >
+                            </a>
+
+                        {% elif value is string
+                            and value.startswith("http") %}
+
+                            <a
+                                href="{{ value }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                リンク
+                            </a>
+
+                        {% else %}
+                            {{ value }}
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="navigation">
+        <a href="index.html">
+            ← 日付一覧へ戻る
+        </a>
+
+        <a href="../index.html">
+            トップへ戻る
+        </a>
+    </div>
+</body>
+</html>

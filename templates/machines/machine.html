@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        台番号 {{ machine_number }} 履歴一覧 |
+        {{ SHOP_NAME }}
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="../css/common.css"
+    >
+
+    <style>
+        body {
+            font-family: Arial, "Noto Sans JP", sans-serif;
+            margin: 20px;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .summary {
+            margin: 10px 0 20px;
+            text-align: center;
+            color: #555;
+        }
+
+        .table-wrapper {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            min-width: 900px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: 5px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        th {
+            background-color: #f0f0f0;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        td a {
+            color: #005fcc;
+            text-decoration: underline;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tr:hover {
+            background-color: #e0f7fa;
+        }
+
+        .return-link {
+            display: block;
+            margin-top: 20px;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        img.thumbnail {
+            max-width: 180px;
+            max-height: 100px;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+
+        .empty-value {
+            color: #aaa;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>
+        台番号 {{ machine_number }} 履歴一覧
+    </h1>
+
+    <div class="summary">
+        履歴件数：{{ rows | length }}件
+    </div>
+
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    {% for column in columns %}
+                    <th>{{ column }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    {% for column in columns %}
+                    <td>
+                        {% set value = row.get(column) %}
+
+                        {% if value is none or value == "" %}
+                            <span class="empty-value">-</span>
+
+                        {% elif column in image_columns
+                            and value is string
+                            and value.startswith("http") %}
+
+                            <a
+                                href="{{ value }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                <img
+                                    src="{{ value }}"
+                                    class="thumbnail"
+                                    alt="{{ column }}"
+                                    loading="lazy"
+                                >
+                            </a>
+
+                        {% elif value is string
+                            and value.startswith("http") %}
+
+                            <a
+                                href="{{ value }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                リンク
+                            </a>
+
+                        {% else %}
+                            {{ value }}
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <a
+        href="index.html"
+        class="return-link"
+    >
+        ← 台番号一覧へ戻る
+    </a>
+</body>
+</html>
