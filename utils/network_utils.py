@@ -146,7 +146,8 @@ def verify_hr01_global_ip(
     """
     HR01直接IPとSquid経由IPを取得して表示する。
 
-    require_match=True の場合、両IPが一致しなければ例外にする。
+    Squid経由IPがメガ・エッグ固定IPならNG。
+    それ以外なら処理を続行する。
     """
     print("\n--- グローバルIP確認 ---")
 
@@ -162,17 +163,38 @@ def verify_hr01_global_ip(
     )
     print(f"Squid経由IP: {squid_ip}")
 
-    if require_match and hr01_ip != squid_ip:
+    # メガ・エッグの固定グローバルIP
+    megaegg_ip = "219.105.53.125"
+
+    # ==========================================
+    # Squidがメガ・エッグから出ていたらNG
+    # ==========================================
+    if squid_ip == megaegg_ip:
         raise RuntimeError(
-            "HR01直接IPとSquid経由IPが一致しません。"
-            f" HR01={hr01_ip!r}"
+            "Squidがメガ・エッグ回線から"
+            "アクセスしています。"
             f" Squid={squid_ip!r}"
         )
 
+    # ==========================================
+    # メガ・エッグでなければOK
+    # ==========================================
     if hr01_ip == squid_ip:
-        print(f"グローバルIP確認OK: {hr01_ip}")
+        print(
+            f"グローバルIP確認OK: {squid_ip}"
+        )
     else:
-        print("注意: HR01直接IPとSquid経由IPが異なります")
+        print(
+            "[IP INFO] HR01直接IPと"
+            "Squid経由IPは異なりますが、"
+            "Squidはメガ・エッグIPではないため"
+            "許容します"
+        )
+
+        print(
+            f"[IP INFO] HR01={hr01_ip}, "
+            f"Squid={squid_ip}"
+        )
 
     return hr01_ip, squid_ip
 
