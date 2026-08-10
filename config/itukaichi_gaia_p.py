@@ -26,6 +26,8 @@ PROJECT_DIR = "itukaichi_gaia_p"
 # HTMLやサイト内で表示する店舗名
 SHOP_NAME = "ガイア五日市店p"
 
+# ログにでてくるファイル名
+LOG_FILE_SUFFIX = "itukaichi_gaia_p.log"
 
 # =========================================================
 # 公開URL設定

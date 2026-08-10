@@ -29,6 +29,9 @@ SHOP_NAME = "岩国テキサスp"
 # クッキー取得に使うurl
 COOKIE_URL = "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c734011"
 
+# ログにでてくるファイル名
+LOG_FILE_SUFFIX = "iwakuni_tekisasu_p.log"
+
 # =========================================================
 # 公開URL設定
 # =========================================================

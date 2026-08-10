@@ -29,6 +29,9 @@ SHOP_NAME = "マリナプローバp"
 # クッキー取得に使うurl
 COOKIE_URL = "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c760306"
 
+# ログにでてくるファイル名
+LOG_FILE_SUFFIX = "marina_p.log"
+
 # =========================================================
 # 公開URL設定
 # =========================================================

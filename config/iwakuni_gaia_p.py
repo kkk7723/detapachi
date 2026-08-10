@@ -26,6 +26,8 @@ PROJECT_DIR = "iwakuni_gaia_p"
 # HTMLやサイト内で表示する店舗名
 SHOP_NAME = "岩国ガイアp"
 
+# ログにでてくるファイル名
+LOG_FILE_SUFFIX = "iwakuni_gaia_p.log"
 
 # =========================================================
 # 公開URL設定

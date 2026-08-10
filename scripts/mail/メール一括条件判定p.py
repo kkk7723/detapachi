@@ -1,14 +1,9 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[5]:
-
-
 from __future__ import annotations
 
 import argparse
 import html
 import importlib
+import re
 import smtplib
 import sqlite3
 import sys
@@ -18,6 +13,7 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -159,6 +155,7 @@ required_site_settings = (
     "DB_PATH",
     "GSHEET_NAME",
     "SHEET_NAME",
+    "LOG_FILE_SUFFIX",
 )
 
 for setting_name in required_site_settings:
@@ -203,6 +200,34 @@ public_base_url = str(
     )
 ).rstrip("/")
 
+log_file_suffix = str(
+    site_config.LOG_FILE_SUFFIX
+)
+
+log_root_dir = Path(
+    getattr(
+        site_config,
+        "LOG_ROOT_DIR",
+        "/home/ubuntu/logs/detapachi",
+    )
+)
+
+power_off_text = str(
+    getattr(
+        site_config,
+        "POWER_OFF_TEXT",
+        "電源OFF",
+    )
+)
+
+power_on_text = str(
+    getattr(
+        site_config,
+        "POWER_ON_TEXT",
+        "電源ON",
+    )
+)
+
 
 print(f"[INFO] 対象店舗: {args.site}")
 print(f"[INFO] 店舗名: {shop_name}")
@@ -212,6 +237,16 @@ print(f"[INFO] 対象テーブル: {TABLE_NAME}")
 print(
     f"[INFO] 公開URL基準: "
     f"{public_base_url}"
+)
+
+print(
+    f"[INFO] ログファイル末尾: "
+    f"{log_file_suffix}"
+)
+
+print(
+    f"[INFO] ログルート: "
+    f"{log_root_dir}"
 )
 
 print(
@@ -1257,6 +1292,162 @@ def notify_threshold_over(
 
 
 # =========================================================
+# 当日ログ取得・イベント集計
+# =========================================================
+
+def get_today_log_path() -> Path | None:
+    """
+    Asia/Tokyo の本日日付フォルダから、
+    対象店舗の最新ログファイルを取得する。
+
+    例:
+        /home/ubuntu/logs/detapachi/
+        20260810/
+        001001_ootake_maruhachi_p.log
+
+    店舗config:
+        LOG_FILE_SUFFIX = "ootake_maruhachi_p.log"
+
+    実際の検索:
+        *_ootake_maruhachi_p.log
+    """
+    today_text = (
+        pd.Timestamp.now(
+            tz=ZoneInfo("Asia/Tokyo")
+        )
+        .strftime("%Y%m%d")
+    )
+
+    log_dir = (
+        log_root_dir
+        / today_text
+    )
+
+    if not log_dir.is_dir():
+        print(
+            f"[WARN] 当日ログディレクトリが"
+            f"見つかりません: {log_dir}"
+        )
+        return None
+
+    pattern = f"*_{log_file_suffix}"
+
+    log_files = [
+        path
+        for path in log_dir.glob(pattern)
+        if path.is_file()
+    ]
+
+    if not log_files:
+        print(
+            f"[WARN] 対象ログが見つかりません: "
+            f"{log_dir / pattern}"
+        )
+        return None
+
+    latest_log_file = max(
+        log_files,
+        key=lambda path: path.stat().st_mtime,
+    )
+
+    print(
+        f"[LOG] 使用ログ: "
+        f"{latest_log_file}"
+    )
+
+    return latest_log_file
+
+
+def analyze_log_events(
+    log_path: Path | None,
+) -> tuple[int, int]:
+    """
+    当日ログから以下を数える。
+
+    1. 電源OFFイベント回数
+       - 電源ON状態から電源OFFを検出した時だけ1回加算
+       - OFF状態中に「電源OFF」が複数行あっても重複加算しない
+       - 「電源ON」を検出したらOFF状態を解除する
+
+    2. NAV最終試行失敗回数
+       - 例:
+         [NAV] 失敗（試行 3/3）
+         [NAV] 失敗（試行 4/4）
+       - 現在試行回数と最大試行回数が同じ行だけ数える
+       - 1/3、2/3、3/4など途中試行の失敗は数えない
+    """
+    if log_path is None:
+        return 0, 0
+
+    if not log_path.is_file():
+        print(
+            f"[WARN] 当日ログが見つかりません: "
+            f"{log_path}"
+        )
+        return 0, 0
+
+    power_off_count = 0
+    power_is_off = False
+    nav_final_failure_count = 0
+
+    nav_failure_pattern = re.compile(
+        r"\[NAV\]\s*失敗"
+        r"[（(]\s*試行\s*"
+        r"(\d+)\s*/\s*(\d+)\s*[）)]"
+    )
+
+    with log_path.open(
+        "r",
+        encoding="utf-8",
+        errors="replace",
+    ) as log_file:
+        for line in log_file:
+            if (
+                power_on_text
+                and power_on_text in line
+            ):
+                power_is_off = False
+
+            if (
+                power_off_text
+                and power_off_text in line
+            ):
+                if not power_is_off:
+                    power_off_count += 1
+                    power_is_off = True
+
+            nav_match = nav_failure_pattern.search(
+                line
+            )
+
+            if nav_match is not None:
+                current_attempt = int(
+                    nav_match.group(1)
+                )
+                max_attempt = int(
+                    nav_match.group(2)
+                )
+
+                if current_attempt == max_attempt:
+                    nav_final_failure_count += 1
+
+    print(
+        f"[LOG] 電源OFFイベント: "
+        f"{power_off_count}回"
+    )
+
+    print(
+        f"[LOG] NAV最終試行失敗: "
+        f"{nav_final_failure_count}回"
+    )
+
+    return (
+        power_off_count,
+        nav_final_failure_count,
+    )
+
+
+# =========================================================
 # メイン処理
 # =========================================================
 
@@ -1264,6 +1455,15 @@ def main() -> None:
     start_time = time.time()
 
     validate_mail_settings()
+
+    log_path = get_today_log_path()
+
+    (
+        power_off_count,
+        nav_final_failure_count,
+    ) = analyze_log_events(
+        log_path
+    )
 
     latest_dataframe, latest_date = (
         load_latest_data()
@@ -1344,13 +1544,22 @@ def main() -> None:
     )
 
     # -----------------------------------------------------
-    # 一致なし
+    # 条件一致・ログ警告なし
     # -----------------------------------------------------
 
-    if not all_sections:
+    has_log_alert = (
+        power_off_count > 0
+        or nav_final_failure_count > 0
+    )
+
+    if (
+        not all_sections
+        and not has_log_alert
+    ):
         print(
-            "[INFO] 条件一致なしのため"
-            "メール送信しません。"
+            "[INFO] 条件一致・電源OFF・"
+            "NAV最終試行失敗ともに"
+            "ないためメール送信しません。"
         )
 
         print(
@@ -1376,6 +1585,12 @@ def main() -> None:
         worksheet_name
     )
 
+    log_path_html = (
+        html.escape(str(log_path))
+        if log_path is not None
+        else "ログなし"
+    )
+
     header_html = f"""
     <h1>
         {escaped_shop_name}
@@ -1388,6 +1603,9 @@ def main() -> None:
         {escaped_spreadsheet_name}
         /
         {escaped_worksheet_name}<br>
+        ログ: {log_path_html}<br>
+        電源OFFイベント: {power_off_count}回<br>
+        NAV最終試行失敗: {nav_final_failure_count}回<br>
         合計ヒット: {total_hits}
     </div>
 
@@ -1407,7 +1625,9 @@ def main() -> None:
     subject = (
         f"{shop_name} 集約通知 "
         f"{latest_date} "
-        f"（{total_hits}件）"
+        f"（条件{total_hits}件 / "
+        f"電源OFF{power_off_count}回 / "
+        f"NAV失敗{nav_final_failure_count}回）"
     )
 
     send_email(
@@ -1427,10 +1647,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-# In[ ]:
-
-
-
-

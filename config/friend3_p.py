@@ -24,6 +24,8 @@ PROJECT_DIR = "friend3_p"
 # HTMLやサイト内で表示する店舗名
 SHOP_NAME = "フレンド3p"
 
+# ログにでてくるファイル名
+LOG_FILE_SUFFIX = "friend3_p.log"
 
 # =========================================================
 # 公開URL設定
