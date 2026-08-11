@@ -146,7 +146,7 @@ PROXY_LIST = site_config.PROXY_LIST
 PROXY_ROTATE_EVERY = site_config.PROXY_ROTATE_EVERY
 
 db_path = site_config.DB_PATH
-cookie_file = site_config.COOKIE_FILE
+cookie_files = site_config.COOKIE_FILES
 output_root = site_config.SITE_OUTPUT_DIR
 
 table_name = TABLE_NAME
@@ -815,9 +815,9 @@ def click_more(
                 )
             except Exception:
                 pass
-                
+
             time.sleep(5)  # ← これだけ追加スクロール
-            
+
             try:
                 button.click()
             except Exception:
@@ -926,17 +926,27 @@ def click_more(
 
     return click_count
 
-def load_cookies(browser):
+def load_cookies(browser, cookie_file):
     try:
         with open(cookie_file, "r") as file:
             cookies = json.load(file)
-            for cookie in cookies:
-                if "sameSite" in cookie:
-                    cookie.pop("sameSite")
-                browser.add_cookie(cookie)
-        print("Cookies loaded.")
+
+        for cookie in cookies:
+            if "sameSite" in cookie:
+                cookie.pop("sameSite")
+
+            browser.add_cookie(cookie)
+
+        print(
+            f"[COOKIE] Cookies loaded: "
+            f"{cookie_file}"
+        )
+
     except FileNotFoundError:
-        print("No cookies found.")
+        print(
+            f"[COOKIE] No cookies found: "
+            f"{cookie_file}"
+        )
 
 def wait_browser_ready(driver, timeout=10):
     """Chrome起動直後の準備完了待ち（about:blank → readyState 確認 → no-op JS）"""
@@ -1525,7 +1535,7 @@ def kill_browser_process_tree(
         "[KILL] このブラウザの"
         "プロセス終了完了"
     )
-    
+
 # ======== バッチ開始時のナビ（既存の安定化） ========
 MAX_NAV_RETRY = site_config.MAX_NAV_RETRY
 
@@ -1533,6 +1543,7 @@ MAX_NAV_RETRY = site_config.MAX_NAV_RETRY
 def open_and_navigate_with_retry(
     proxy_url: str | None,
     target_url: str,
+    cookie_file,
 ):
     last_err = None
 
@@ -1608,7 +1619,10 @@ def open_and_navigate_with_retry(
             # Cookie投入
             # =====================
             if os.path.exists(cookie_file):
-                load_cookies(drv)
+                load_cookies(
+                    drv,
+                    cookie_file,
+                )
                 drv.refresh()
 
                 WebDriverWait(
@@ -1800,7 +1814,7 @@ def open_and_navigate_with_retry(
     raise RuntimeError(
         f"ナビゲーションに失敗: {last_err}"
     )
-    
+
 # ======== ★ 行ごとの“最小”再起動用（1回だけ） ========
 def ensure_on_target_or_raise(
     driver,
@@ -1849,7 +1863,7 @@ def ensure_on_target_or_raise(
         driver,
         timeout=timeout,
     )
-    
+
 class SearchResultTimeoutError(TimeoutException):
     """検索後、取得更新日要素を時間内に取得できなかった。"""
 
@@ -2202,6 +2216,33 @@ sku_seq = get_starting_sku_seq(
 
 total = len(filtered_dai_numbers)
 
+# ==================================================
+# Cookie切替状態
+#
+# Cookieはbatch単位では切り替えない。
+# スクリプト開始時はCOOKIE_FILESの先頭を使用し、
+# HR01再起動が正常完了するたびに
+# 1つ次のCookieへ切り替える。
+# 最後まで到達したら先頭へ戻る。
+# ==================================================
+
+if not cookie_files:
+    raise RuntimeError(
+        "COOKIE_FILESが空です。"
+        " 店舗configに1個以上のCookieファイルを設定してください。"
+    )
+
+cookie_index = 0
+
+current_cookie_file = cookie_files[
+    cookie_index
+]
+
+print(
+    f"[COOKIE] 初期Cookie: "
+    f"{current_cookie_file}"
+)
+
 for batch_start in range(
     0,
     total,
@@ -2228,11 +2269,11 @@ for batch_start in range(
     # ==================================================
     # HR01ルート設定
     # ==================================================
-    
+
     print(
         "[NET] HR01ルート設定"
     )
-    
+
     reset_hr01_route(
         hr01_interface=HR01_INTERFACE,
         hr01_gateway=HR01_GATEWAY,
@@ -2244,9 +2285,15 @@ for batch_start in range(
     # ==================================================
 
     try:
+        print(
+            f"[COOKIE] 現在のCookie: "
+            f"{current_cookie_file}"
+        )
+
         browser = open_and_navigate_with_retry(
             proxy_url,
             target_site,
+            current_cookie_file,
         )
 
     except Exception as e:
@@ -2435,19 +2482,19 @@ for batch_start in range(
                     # --------------------------------------
                     # 検索実行
                     # --------------------------------------
-                    
+
                     print_step(
                         "検索ボタンクリック"
                     )
-                    
+
                     expected_number = normalize_dai_number(
                         dai_number
                     )
-                    
+
                     expected_param = (
                         f"cd_dai={int(expected_number):04d}"
                     )
-                    
+
                     browser.execute_script(
                         (
                             "arguments[0].scrollIntoView("
@@ -2456,7 +2503,7 @@ for batch_start in range(
                         ),
                         target_button,
                     )
-                    
+
                     # ======================================
                     # 検索ボタンは1回だけクリックする
                     #
@@ -2466,24 +2513,24 @@ for batch_start in range(
                     # 「クリックしたがURL遷移しない」場合には
                     # 再クリックしない。
                     # ======================================
-                    
+
                     try:
                         target_button.click()
-                    
+
                         print(
                             "[SEARCH] 通常クリック実行"
                         )
-                    
+
                     except Exception:
                         browser.execute_script(
                             "arguments[0].click();",
                             target_button,
                         )
-                    
+
                         print(
                             "[SEARCH] JSクリック実行"
                         )
-                    
+
                     # ======================================
                     # URL遷移を最大15秒待つ
                     #
@@ -2491,48 +2538,48 @@ for batch_start in range(
                     # サイト側のレスポンスが遅い場合も
                     # 最大15秒そのまま待つ。
                     # ======================================
-                    
+
                     print(
                         "[SEARCH] "
                         "目的台番号のURL遷移待機"
                         "（最大15秒）"
                     )
-                    
+
                     click_success = False
                     click_deadline = time.time() + 15
-                    
+
                     last_url = ""
-                    
+
                     while time.time() < click_deadline:
                         try:
                             current_url = browser.current_url
-                    
+
                             last_url = current_url
-                    
+
                             if expected_param in current_url:
                                 click_success = True
-                    
+
                                 print(
                                     "[SEARCH] "
                                     "検索クリック成功確認: "
                                     f"{expected_param}"
                                 )
-                    
+
                                 print(
                                     "[SEARCH] 遷移後URL: "
                                     f"{current_url}"
                                 )
-                    
+
                                 break
-                    
+
                         except WebDriverException:
                             raise
-                    
+
                         except Exception:
                             pass
-                    
+
                         time.sleep(0.5)
-                    
+
                     # ======================================
                     # 15秒経過しても目的URLでなければ失敗
                     #
@@ -2543,20 +2590,20 @@ for batch_start in range(
                     # 既存のブラウザ終了・HR01再起動処理へ
                     # 任せる。
                     # ======================================
-                    
+
                     if not click_success:
                         print(
                             "[SEARCH ERROR] "
                             "15秒以内に目的台番号のURLへ"
                             "遷移しませんでした"
                         )
-                    
+
                         print(
                             "[SEARCH ERROR] "
                             f"expected={expected_param!r}, "
                             f"current_url={last_url!r}"
                         )
-                    
+
                         raise RuntimeError(
                             "検索ボタンを1回クリックしましたが、"
                             "15秒以内に目的台番号のURLへ"
@@ -2564,16 +2611,16 @@ for batch_start in range(
                             f" expected={expected_param!r}"
                             f" current_url={last_url!r}"
                         )
-                    
+
                     # --------------------------------------
                     # 検索結果待機
                     # --------------------------------------
-                    
+
                     print_step(
                         "取得更新日・表示台番号待機"
                         "（最大60秒）"
                     )
-                    
+
                     update_date, displayed_text = (
                         wait_for_update_date(
                             browser,
@@ -2586,13 +2633,13 @@ for batch_start in range(
                     # --------------------------------------
                     # もっと見る前の固定待機
                     # --------------------------------------
-                    
+
                     print(
                         "[WAIT] もっと見るクリック前に8秒待機"
                     )
-                    
+
                     time.sleep(8)
-                    
+
                     # --------------------------------------
                     # もっと見る
                     # --------------------------------------
@@ -3100,45 +3147,45 @@ for batch_start in range(
                         f"{dai_number} "
                         "ブラウザ終了・HR01再起動"
                     )
-                    
+
                     # ======================================
                     # ブラウザ終了・HR01再起動
                     # ======================================
-                    
+
                     try:
                         print("[INFO] ブラウザプロセス終了開始")
-                    
+
                         kill_browser_process_tree(
                             browser
                         )
-                    
+
                         print("[INFO] ブラウザプロセス終了完了")
-                    
+
                         time.sleep(3)
-                    
+
                         # ----------------------------------
                         # HR01再起動前のIP確認
                         # ----------------------------------
-                    
+
                         print(
                             "[INFO] HR01再起動前の"
                             "グローバルIP確認開始"
                         )
-                    
+
                         before_hr01_ip = None
                         before_squid_ip = None
-                    
+
                         try:
                             before_hr01_ip = get_global_ip(
                                 HR01_INTERFACE,
                                 timeout=20,
                             )
-                    
+
                             print(
                                 "[INFO] 再起動前HR01グローバルIP: "
                                 f"{before_hr01_ip}"
                             )
-                    
+
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動前HR01グローバルIP"
@@ -3146,18 +3193,18 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-                    
+
                         try:
                             before_squid_ip = get_squid_ip(
                                 SQUID_PROXY,
                                 timeout=20,
                             )
-                    
+
                             print(
                                 "[INFO] 再起動前Squid経由IP: "
                                 f"{before_squid_ip}"
                             )
-                    
+
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動前Squid経由IP"
@@ -3165,15 +3212,15 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-                    
+
                         # ----------------------------------
                         # HR01再起動
                         # ----------------------------------
-                    
+
                         print(
                             "[INFO] HR01再起動開始"
                         )
-                    
+
                         reboot_hr01_sync(
                             tapo_username=TAPO_USERNAME,
                             tapo_password=TAPO_PASSWORD,
@@ -3182,34 +3229,63 @@ for batch_start in range(
                             hr01_gateway=HR01_GATEWAY,
                             squid_proxy=SQUID_PROXY,
                         )
-                    
+
                         print(
                             "[INFO] HR01再起動完了"
                         )
-                    
+
+                        # ----------------------------------
+                        # Cookie切替
+                        #
+                        # batchでは切り替えない。
+                        # HR01再起動が正常完了した時だけ
+                        # 次のCookieへ進める。
+                        # ----------------------------------
+
+                        previous_cookie_file = (
+                            current_cookie_file
+                        )
+
+                        cookie_index = (
+                            cookie_index + 1
+                        ) % len(cookie_files)
+
+                        current_cookie_file = (
+                            cookie_files[
+                                cookie_index
+                            ]
+                        )
+
+                        print(
+                            "[COOKIE] HR01再起動後Cookie切替: "
+                            f"{previous_cookie_file} "
+                            "-> "
+                            f"{current_cookie_file}"
+                        )
+
                         # ----------------------------------
                         # HR01再起動後のIP確認
                         # ----------------------------------
-                    
+
                         print(
                             "[INFO] 対象URLアクセス前の"
                             "グローバルIP確認開始"
                         )
-                    
+
                         after_hr01_ip = None
                         after_squid_ip = None
-                    
+
                         try:
                             after_hr01_ip = get_global_ip(
                                 HR01_INTERFACE,
                                 timeout=20,
                             )
-                    
+
                             print(
                                 "[INFO] 再起動後HR01グローバルIP: "
                                 f"{after_hr01_ip}"
                             )
-                    
+
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動後HR01グローバルIP"
@@ -3217,18 +3293,18 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-                    
+
                         try:
                             after_squid_ip = get_squid_ip(
                                 SQUID_PROXY,
                                 timeout=20,
                             )
-                    
+
                             print(
                                 "[INFO] 再起動後Squid経由IP: "
                                 f"{after_squid_ip}"
                             )
-                    
+
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動後Squid経由IP"
@@ -3236,11 +3312,11 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-                    
+
                         # ----------------------------------
                         # IP変更判定
                         # ----------------------------------
-                    
+
                         if (
                             before_hr01_ip
                             and after_hr01_ip
@@ -3257,18 +3333,18 @@ for batch_start in range(
                                     "HR01グローバルIPは変更されていません: "
                                     f"{after_hr01_ip}"
                                 )
-                    
+
                         else:
                             print(
                                 "[IP CHANGE WARN] "
                                 "再起動前後のHR01 IPを両方取得できないため、"
                                 "IP変更を判定できません"
                             )
-                    
+
                         # ----------------------------------
                         # 再起動後の経路確認
                         # ----------------------------------
-                    
+
                         if (
                             after_hr01_ip
                             and after_squid_ip
@@ -3290,49 +3366,50 @@ for batch_start in range(
                                     f"[PROXY WARN] Squid: "
                                     f"{after_squid_ip}"
                                 )
-                    
+
                         # ----------------------------------
                         # ブラウザ再起動
                         # ----------------------------------
-                    
+
                         print(
                             "[INFO] ブラウザ再起動開始"
                         )
-                    
+
                         browser = open_and_navigate_with_retry(
                             proxy_url,
                             target_site,
+                            current_cookie_file,
                         )
-                    
+
                         print(
                             "[INFO] ブラウザ再起動完了"
                         )
-                    
+
                         print(
                             f"[RETRY] 台番号 "
                             f"{dai_number} を再実行"
                         )
-                    
+
                         continue
-                    
+
                     except Exception as restart_error:
                         print(
                             "[RESTART ERROR] "
                             f"{type(restart_error).__name__}: "
                             f"{restart_error}"
                         )
-                    
+
                         break
 
         # ==================================================
         # 台番号ごとに必ずDB保存
         # ==================================================
-        
+
         finally:
             print_step(
                 "DB保存"
             )
-        
+
             try:
                 insert_scraping_row(
                     conn,
@@ -3341,7 +3418,7 @@ for batch_start in range(
                     DB_TODAY_SCHEMA,
                     HIST_RE,
                 )
-        
+
             except Exception as db_error:
                 print(
                     "[DB保存失敗] "
@@ -3349,18 +3426,18 @@ for batch_start in range(
                     f"{data_entry.get('SKU')} "
                     f"err={db_error!r}"
                 )
-        
+
             # ==============================================
             # 次の台番号検索まで待機
             #
             # DB保存まで完全に終了してから
             # 次の台の検索通信まで間隔を空ける。
             # ==============================================
-        
+
             print(
                 "[WAIT] 次の台まで15秒待機"
             )
-            
+
             time.sleep(15)
 
     # ==================================================

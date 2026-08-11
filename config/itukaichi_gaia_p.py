@@ -116,7 +116,11 @@ PROXY_ROTATE_EVERY = 10
 DB_PATH = DB_DIR / SITE_KEY / "data.db"
 
 # Selenium用Cookie
-COOKIE_FILE = CREDENTIALS_DIR / SITE_KEY / "cookies.json"
+COOKIE_FILES = [
+    CREDENTIALS_DIR / SITE_KEY / "cookies1.json",
+    CREDENTIALS_DIR / SITE_KEY / "cookies2.json",
+    CREDENTIALS_DIR / SITE_KEY / "cookies3.json",
+]
 
 # HTML・画像などの店舗別出力先
 SITE_OUTPUT_DIR = OUTPUT_DIR / SITE_KEY
