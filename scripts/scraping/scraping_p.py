@@ -47,6 +47,7 @@ from config.common import (
     BATCH_SIZE,
     GOOGLE_CREDENTIALS_FILE,
     GOOGLE_SCOPES,
+    HISTORY_COLUMNS,
     HR01_GATEWAY,
     HR01_INTERFACE,
     SQUID_PROXY,
@@ -89,6 +90,40 @@ from utils.screenshot_utils import (
     save_machine_elements_as_webp,
 )
 
+from utils.scraping_value_utils import (
+    normalize_dai_number,
+    normalize_update_date_text,
+    to_int_or_none,
+)
+
+from utils.browser_utils import (
+    get_chrome_process_info,
+    kill_browser_process_tree,
+    open_browser,
+    wait_browser_ready,
+)
+
+from utils.search_utils import (
+    SearchResultTimeoutError,
+    ensure_on_target_or_raise,
+    wait_for_update_date,
+    wait_machine_number_input_ready,
+    wait_search_menu_ready,
+)
+
+from utils.selenium_utils import (
+    dismiss_overlays,
+    safe_click,
+    safe_set_value,
+    switch_to_frame_containing,
+)
+from utils.cookie_utils import load_cookies
+from utils.history_utils import click_more
+
+from utils.browser_diagnostics_utils import (
+    log_browser_diagnostics,
+    log_request_headers,
+)
 
 # ==================================================
 # 店舗選択
@@ -156,7 +191,7 @@ today = (now - timedelta(days=1)).strftime("%Y%m%d")
 sku_date = now.strftime("%Y%m%d")
 
 # WebP画像出力先:
-# detapachi/output/<site>/img/<YYYYMMDD>/webp/
+# detaslot/output/<site>/img/<YYYYMMDD>/webp/
 image_root = output_root / "img" / today
 webp_dir = image_root / "webp"
 webp_dir.mkdir(
@@ -238,1303 +273,17 @@ def print_step(message: str) -> None:
     print(f"[STEP] {message}")
 
 
-# ========= 数値パーサ =========
-
-def to_int_or_none(s: str):
-    """
-    文字列から整数を抽出。
-    - '▲230' や 全角マイナス '－230' / '−230' も負数として解釈
-    - 桁以外は無視（カンマ、空白、単位など）
-    - '1/281' や '１／２８１' / '1/281.4' 形式は '1/' を削除して分母だけを数値化
-    - 小数点は無視して整数化（切り捨て）
-    """
-    if s is None:
-        return None
-    s = str(s).strip()
-    # 全角数字・全角スラッシュ→半角
-    trans_map = str.maketrans("０１２３４５６７８９／．", "0123456789/.")
-    s_norm = s.translate(trans_map)
-    # 先頭が "1/" の場合は削除
-    if s_norm.startswith("1/"):
-        s = s_norm[2:].lstrip()
-    else:
-        s = s_norm
-    # マイナス記号・負数表現の検出
-    negative = False
-    if s.startswith(("▲", "-", "－", "−")):
-        negative = True
-    # 数字または小数点を抽出
-    m = re.search(r"(\d+(?:\.\d+)?)", s)
-    if not m:
-        return None
-    # 小数点があれば切り捨て
-    try:
-        val = math.floor(float(m.group(1)))
-    except ValueError:
-        return None
-    return -val if negative else val
-
 # 履歴カラム名:
-# 時刻1回前、ゲーム1回前、ステータス1回前、出玉pt1回前 ... を判定
-HIST_RE = re.compile(
-    r"^(時刻|ゲーム|ステータス|出玉pt)(\d+)回前$"
+# common.py の HISTORY_COLUMNS をもとに判定する。
+HISTORY_COLUMN_NAMES = tuple(
+    HISTORY_COLUMNS.values()
 )
 
-
-
-# ==================================================
-# Selenium共通処理
-# ==================================================
-
-def dismiss_overlays(driver):
-    """クッキー同意などのオーバーレイを可能な範囲で閉じる。"""
-    texts = [
-        "同意",
-        "同意する",
-        "OK",
-        "閉じる",
-        "許可",
-        "Accept",
-        "I agree",
-        "Close",
-    ]
-
-    try:
-        candidates = driver.find_elements(
-            By.XPATH,
-            "//button|//a|//div",
-        )
-
-        for element in candidates[:80]:
-            try:
-                label = (element.text or "").strip()
-
-                if (
-                    any(text in label for text in texts)
-                    and element.is_displayed()
-                    and element.is_enabled()
-                ):
-                    driver.execute_script(
-                        "arguments[0].scrollIntoView({block:'center'});",
-                        element,
-                    )
-
-                    try:
-                        element.click()
-                    except Exception:
-                        driver.execute_script(
-                            "arguments[0].click();",
-                            element,
-                        )
-
-                    time.sleep(0.1)
-
-            except Exception:
-                pass
-
-    except Exception:
-        pass
-
-
-def switch_to_frame_containing(
-    driver,
-    by,
-    value,
-    timeout=5,
-):
-    """
-    指定ロケータの要素を含むiframeを探索して切り替える。
-    見つからなければトップへ戻してFalseを返す。
-    """
-    driver.switch_to.default_content()
-    deadline = time.time() + timeout
-
-    while time.time() < deadline:
-        try:
-            if driver.find_elements(by, value):
-                return True
-        except Exception:
-            pass
-
-        frames = driver.find_elements(
-            By.TAG_NAME,
-            "iframe",
-        )
-
-        for frame in frames:
-            try:
-                driver.switch_to.default_content()
-                driver.switch_to.frame(frame)
-
-                if driver.find_elements(by, value):
-                    return True
-
-            except Exception:
-                continue
-
-        time.sleep(0.2)
-
-    driver.switch_to.default_content()
-    return False
-
-
-def safe_click(
-    driver,
-    locator,
-    timeout=10,
-):
-    """
-    presence確認後、
-    通常クリック→JavaScriptクリックの順で試す。
-    """
-    element = WebDriverWait(
-        driver,
-        timeout,
-    ).until(
-        EC.presence_of_element_located(locator)
-    )
-
-    try:
-        WebDriverWait(
-            driver,
-            timeout,
-        ).until(
-            EC.element_to_be_clickable(locator)
-        )
-    except Exception:
-        pass
-
-    try:
-        driver.execute_script(
-            "arguments[0].scrollIntoView({block:'center'});",
-            element,
-        )
-        element.click()
-        return
-    except Exception:
-        pass
-
-    driver.execute_script(
-        "arguments[0].click();",
-        element,
-    )
-
-
-def safe_set_value(
-    driver,
-    locator,
-    value,
-    timeout=10,
-):
-    """
-    input要素へ値を設定し、
-    input/changeイベントを発火する。
-    """
-    switch_to_frame_containing(
-        driver,
-        *locator,
-        timeout=timeout,
-    )
-
-    element = WebDriverWait(
-        driver,
-        timeout,
-    ).until(
-        EC.presence_of_element_located(locator)
-    )
-
-    try:
-        WebDriverWait(
-            driver,
-            timeout,
-        ).until(
-            EC.visibility_of_element_located(locator)
-        )
-    except Exception:
-        pass
-
-    driver.execute_script(
-        """
-        const element = arguments[0];
-        const value = arguments[1];
-
-        element.focus();
-
-        const setter =
-            Object.getOwnPropertyDescriptor(
-                HTMLInputElement.prototype,
-                'value'
-            ).set;
-
-        setter.call(element, '');
-        setter.call(element, value);
-
-        element.dispatchEvent(
-            new Event('input', {bubbles: true})
-        );
-
-        element.dispatchEvent(
-            new Event('change', {bubbles: true})
-        );
-        """,
-        element,
-        value,
-    )
-
-# ==============================================
-# なんのプロセスか確認も
-# ==============================================
-def open_browser(proxy_url=None):
-    """
-    SeleniumBase Driverを起動する。
-
-    起動前後のChrome系プロセスを比較し、
-    今回増えたPIDと、このブラウザ専用の
-    user-data-dirを内部では保存する。
-
-    ログは必要最低限だけ表示する。
-    """
-    prefix = "[MAIN]"
-
-    # Seleniumのローカル接続には
-    # プロキシを適用しない
-    proxy_environment_names = (
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-    )
-
-    for environment_name in proxy_environment_names:
-        os.environ.pop(
-            environment_name,
-            None,
-        )
-
-    no_proxy = "127.0.0.1,localhost,::1"
-
-    os.environ["NO_PROXY"] = os.environ.get(
-        "NO_PROXY",
-        no_proxy,
-    )
-
-    os.environ["no_proxy"] = os.environ.get(
-        "no_proxy",
-        no_proxy,
-    )
-
-    use_proxy = (
-        proxy_url
-        if (
-            proxy_url
-            and str(proxy_url).lower() != "none"
-        )
-        else None
-    )
-
-    # ==============================================
-    # Chrome起動前のプロセスを記録
-    # ==============================================
-
-    before_processes = get_chrome_process_info()
-
-    print(
-        f"{prefix} Chrome起動前の"
-        f"Chrome系プロセス数="
-        f"{len(before_processes)}"
-    )
-
-    print(
-        f"{prefix} Driver起動開始"
-    )
-
-    # ==============================================
-    # Driver起動
-    # ==============================================
-
-    driver = Driver(
-        uc=True,
-        headless=False,
-        proxy=use_proxy,
-        page_load_strategy="normal",
-    )
-
-    print(
-        f"{prefix} Driver生成完了"
-    )
-
-    # Chrome関連プロセスが出そろうまで少し待つ
-    time.sleep(2)
-
-    # ==============================================
-    # Chrome起動後のプロセスを確認
-    # ==============================================
-
-    after_processes = get_chrome_process_info()
-
-    new_process_ids = sorted(
-        set(after_processes)
-        - set(before_processes)
-    )
-
-    print(
-        f"{prefix} Chrome起動後の"
-        f"Chrome系プロセス数="
-        f"{len(after_processes)} "
-        f"（増加={len(new_process_ids)}）"
-    )
-
-    # ==============================================
-    # SeleniumBaseが自動作成した
-    # user-data-dirを取得
-    # ==============================================
-
-    profile_dir = None
-
-    for process_id in new_process_ids:
-        process_info = after_processes.get(
-            process_id
-        )
-
-        if not process_info:
-            continue
-
-        command_text = (
-            process_info.get("cmdline")
-            or ""
-        )
-
-        match = re.search(
-            r"--user-data-dir=(?:\"([^\"]+)\"|'([^']+)'|([^\s]+))",
-            command_text,
-        )
-
-        if match:
-            profile_dir = next(
-                (
-                    value
-                    for value in match.groups()
-                    if value
-                ),
-                None,
-            )
-
-            if profile_dir:
-                break
-
-    # ==============================================
-    # 後の強制終了処理で使う情報を保存
-    # ==============================================
-
-    driver._detapachi_process_pids = (
-        new_process_ids
-    )
-
-    driver._detapachi_profile_dir = (
-        profile_dir
-    )
-
-    print(
-        f"{prefix} user-data-dir="
-        f"{profile_dir}"
-    )
-
-    if not profile_dir:
-        print(
-            f"{prefix} [WARN] "
-            "user-data-dirを取得できませんでした"
-        )
-
-    # ==============================================
-    # ブラウザサイズ
-    # ==============================================
-
-    driver.set_window_size(
-        200,
-        1920,
-    )
-
-    print(
-        f"{prefix} Chrome launched "
-        f"session_id={driver.session_id}"
-    )
-
-    # ==============================================
-    # uc_driverのPID取得
-    # ==============================================
-
-    service = getattr(
-        driver,
-        "service",
-        None,
-    )
-
-    service_process = getattr(
-        service,
-        "process",
-        None,
-    )
-
-    service_pid = getattr(
-        service_process,
-        "pid",
-        None,
-    )
-
-    driver._detapachi_driver_pid = (
-        service_pid
-    )
-
-    print(
-        f"{prefix} driver PID="
-        f"{service_pid}"
-    )
-
-    # ==============================================
-    # Proxy表示
-    # ==============================================
-
-    if use_proxy:
-        print(
-            f"{prefix} proxy="
-            f"{use_proxy}"
-        )
-
-    else:
-        print(
-            f"{prefix} proxy=(none)"
-        )
-
-    return driver
-
-# ==============================================
-# もっとみるクリック関連
-# ==============================================
-def click_more(
-    driver,
-    *,
-    max_clicks: int = 15,
-    wait_after_click: float = 0.8,
-    change_timeout: int = 5,
-) -> int:
-    """
-    「もっと見る」を安全に展開する。
-
-    終了条件:
-    - ボタンが存在しない
-    - ボタンが非表示
-    - ボタンが無効
-    - クリック後に履歴行数が増えない
-    - ボタンが同じ状態のまま変化しない
-    - max_clicksへ到達
-    - ブラウザセッションが切れた
-
-    Returns
-    -------
-    int
-        成功したクリック回数
-    """
-
-    more_locator = (
-        By.ID,
-        "tblHISTm",
-    )
-
-    history_row_locator = (
-        By.CSS_SELECTOR,
-        "#tblHIST tr",
-    )
-
-    click_count = 0
-
-    print(
-        f"[MORE] 展開開始 "
-        f"(最大{max_clicks}回)"
-    )
-
-    for attempt in range(
-        1,
-        max_clicks + 1,
-    ):
-        try:
-            # ブラウザセッション生存確認
-            driver.execute_script(
-                "return document.readyState"
-            )
-
-            # 現在の履歴行数
-            before_rows = len(
-                driver.find_elements(
-                    *history_row_locator
-                )
-            )
-
-            buttons = driver.find_elements(
-                *more_locator
-            )
-
-            visible_buttons = []
-
-            for button in buttons:
-                try:
-                    if (
-                        button.is_displayed()
-                        and button.is_enabled()
-                    ):
-                        visible_buttons.append(
-                            button
-                        )
-                except Exception:
-                    continue
-
-            if not visible_buttons:
-                print(
-                    "[MORE] ボタンなし・非表示のため終了"
-                )
-                break
-
-            button = visible_buttons[0]
-
-            print(
-                f"[MORE] クリック "
-                f"{attempt}/{max_clicks} "
-                f"(クリック前履歴行数={before_rows})"
-            )
-
-            try:
-                driver.execute_script(
-                    """
-                    arguments[0].scrollIntoView({
-                        block: 'center',
-                        inline: 'nearest'
-                    });
-                    """,
-                    button,
-                )
-            except Exception:
-                pass
-
-            time.sleep(5)  # ← これだけ追加スクロール
-
-            try:
-                button.click()
-            except Exception:
-                driver.execute_script(
-                    "arguments[0].click();",
-                    button,
-                )
-
-            click_count += 1
-
-            # クリック後、履歴行数の増加または
-            # ボタン消失を短時間だけ待つ
-            deadline = (
-                time.time()
-                + change_timeout
-            )
-
-            changed = False
-            after_rows = before_rows
-
-            while time.time() < deadline:
-                try:
-                    after_rows = len(
-                        driver.find_elements(
-                            *history_row_locator
-                        )
-                    )
-
-                    current_buttons = (
-                        driver.find_elements(
-                            *more_locator
-                        )
-                    )
-
-                    current_visible = False
-
-                    for current_button in current_buttons:
-                        try:
-                            if current_button.is_displayed():
-                                current_visible = True
-                                break
-                        except Exception:
-                            continue
-
-                    if after_rows > before_rows:
-                        changed = True
-                        break
-
-                    if not current_visible:
-                        changed = True
-                        break
-
-                except WebDriverException:
-                    raise
-
-                except Exception:
-                    pass
-
-                time.sleep(0.2)
-
-            print(
-                f"[MORE] クリック後履歴行数="
-                f"{after_rows}"
-            )
-
-            if not changed:
-                print(
-                    "[MORE] 履歴件数が増えないため終了"
-                )
-                break
-
-            time.sleep(
-                wait_after_click
-            )
-
-        except TimeoutException:
-            print(
-                "[MORE] ボタン待機タイムアウトのため終了"
-            )
-            break
-
-        except WebDriverException as exc:
-            print(
-                "[MORE] WebDriverエラー: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            raise
-
-        except Exception as exc:
-            print(
-                "[MORE] 展開エラー: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            break
-
-    else:
-        print(
-            f"[MORE] 最大クリック数 "
-            f"{max_clicks}回へ到達"
-        )
-
-    print(
-        f"[MORE] 展開終了 "
-        f"(成功クリック={click_count}回)"
-    )
-
-    return click_count
-
-def load_cookies(browser, cookie_file):
-    try:
-        with open(cookie_file, "r") as file:
-            cookies = json.load(file)
-
-        for cookie in cookies:
-            if "sameSite" in cookie:
-                cookie.pop("sameSite")
-
-            browser.add_cookie(cookie)
-
-        print(
-            f"[COOKIE] Cookies loaded: "
-            f"{cookie_file}"
-        )
-
-    except FileNotFoundError:
-        print(
-            f"[COOKIE] No cookies found: "
-            f"{cookie_file}"
-        )
-
-def wait_browser_ready(driver, timeout=10):
-    """Chrome起動直後の準備完了待ち（about:blank → readyState 確認 → no-op JS）"""
-    driver.get("about:blank")
-    WebDriverWait(driver, timeout).until(
-        lambda d: d.execute_script("return document.readyState") in ("interactive", "complete")
-    )
-    driver.execute_script("return 1")  # no-op：Executorが生きてるか確認
-
-
-def wait_search_menu_ready(
-    driver,
-    timeout=30,
-):
-    """
-    「台番号で探す」の検索メニューが
-    表示・操作可能になるまで待つ。
-
-    台番号入力欄 cd_dai は、
-    検索メニューをクリックした後に表示されるため、
-    ここでは待たない。
-
-    タイムアウト時は、
-    URL・タイトル・readyState・
-    search-item数・iframe数などをログ出力する。
-    """
-    locator = (
-        By.XPATH,
-        (
-            "//div[contains(@class,'search-item') "
-            "and contains(.,'台番号で探す')]"
-        ),
-    )
-
-    deadline = time.time() + timeout
-    last_error = None
-
-    last_top_count = 0
-    last_iframe_count = 0
-    last_search_item_count = 0
-
-    while time.time() < deadline:
-        try:
-            # ==========================================
-            # まずトップ階層を確認
-            # ==========================================
-            driver.switch_to.default_content()
-
-            elements = driver.find_elements(
-                *locator
-            )
-
-            last_top_count = len(elements)
-
-            for element in elements:
-                try:
-                    if (
-                        element.is_displayed()
-                        and element.is_enabled()
-                    ):
-                        print(
-                            "[NAV] 台番号検索メニュー"
-                            "描画完了"
-                        )
-
-                        driver.switch_to.default_content()
-
-                        return element
-
-                except Exception as exc:
-                    last_error = exc
-                    continue
-
-            # ==========================================
-            # iframe数確認
-            # ==========================================
-            frames = driver.find_elements(
-                By.TAG_NAME,
-                "iframe",
-            )
-
-            last_iframe_count = len(frames)
-
-            # ==========================================
-            # iframe内を探索
-            # ==========================================
-            for frame_index, frame in enumerate(
-                frames
-            ):
-                try:
-                    driver.switch_to.default_content()
-                    driver.switch_to.frame(frame)
-
-                    elements = driver.find_elements(
-                        *locator
-                    )
-
-                    for element in elements:
-                        try:
-                            if (
-                                element.is_displayed()
-                                and element.is_enabled()
-                            ):
-                                print(
-                                    "[NAV] 台番号検索メニュー"
-                                    "描画完了"
-                                    "（iframe内 "
-                                    f"index={frame_index}）"
-                                )
-
-                                return element
-
-                        except Exception as exc:
-                            last_error = exc
-                            continue
-
-                except Exception as exc:
-                    last_error = exc
-                    continue
-
-            driver.switch_to.default_content()
-
-            # ==========================================
-            # search-item自体が存在するか確認
-            # ==========================================
-            try:
-                last_search_item_count = len(
-                    driver.find_elements(
-                        By.CSS_SELECTOR,
-                        ".search-item",
-                    )
-                )
-
-            except Exception as exc:
-                last_error = exc
-
-        except Exception as exc:
-            last_error = exc
-
-        time.sleep(0.5)
-
-    # ==============================================
-    # タイムアウト時の詳細ログ
-    # ==============================================
-    try:
-        driver.switch_to.default_content()
-    except Exception:
-        pass
-
-    try:
-        current_url = driver.current_url
-    except Exception as exc:
-        current_url = (
-            f"(取得失敗: "
-            f"{type(exc).__name__}: {exc})"
-        )
-
-    try:
-        title = driver.title
-    except Exception as exc:
-        title = (
-            f"(取得失敗: "
-            f"{type(exc).__name__}: {exc})"
-        )
-
-    try:
-        ready_state = driver.execute_script(
-            "return document.readyState"
-        )
-    except Exception as exc:
-        ready_state = (
-            f"(取得失敗: "
-            f"{type(exc).__name__}: {exc})"
-        )
-
-    try:
-        page_source_length = len(
-            driver.page_source
-        )
-    except Exception:
-        page_source_length = -1
-
-    try:
-        body_text = driver.find_element(
-            By.TAG_NAME,
-            "body",
-        ).text
-    except Exception:
-        body_text = ""
-
-    body_preview = (
-        body_text
-        .replace("\n", " ")
-        .strip()
-    )
-
-    if len(body_preview) > 500:
-        body_preview = (
-            body_preview[:500]
-            + "..."
-        )
-
-    print()
-    print(
-        "========== [NAV DEBUG] =========="
-    )
-
-    print(
-        f"[NAV DEBUG] timeout={timeout}秒"
-    )
-
-    print(
-        f"[NAV DEBUG] current_url="
-        f"{current_url}"
-    )
-
-    print(
-        f"[NAV DEBUG] title="
-        f"{title!r}"
-    )
-
-    print(
-        f"[NAV DEBUG] readyState="
-        f"{ready_state}"
-    )
-
-    print(
-        f"[NAV DEBUG] 対象XPath要素数="
-        f"{last_top_count}"
-    )
-
-    print(
-        f"[NAV DEBUG] search-item数="
-        f"{last_search_item_count}"
-    )
-
-    print(
-        f"[NAV DEBUG] iframe数="
-        f"{last_iframe_count}"
-    )
-
-    print(
-        f"[NAV DEBUG] page_source長="
-        f"{page_source_length}"
-    )
-
-    print(
-        f"[NAV DEBUG] body先頭="
-        f"{body_preview!r}"
-    )
-
-    print(
-        f"[NAV DEBUG] last_error="
-        f"{last_error!r}"
-    )
-
-    print(
-        "================================="
-    )
-    print()
-
-    raise TimeoutException(
-        "台番号検索メニューが"
-        f"{timeout}秒以内に描画されませんでした。"
-        f" current_url={current_url!r}"
-        f" readyState={ready_state!r}"
-        f" target_count={last_top_count}"
-        f" search_item_count="
-        f"{last_search_item_count}"
-        f" iframe_count={last_iframe_count}"
-        f" last_error={last_error!r}"
-    )
-
-
-def wait_machine_number_input_ready(
-    driver,
-    timeout=15,
-):
-    """
-    「台番号で探す」をクリックした後、
-    台番号入力欄 cd_dai が
-    表示・操作可能になるまで待つ。
-    """
-    locator = (
-        By.NAME,
-        "cd_dai",
-    )
-
-    deadline = time.time() + timeout
-    last_error = None
-
-    while time.time() < deadline:
-        try:
-            # 現在のframeをまず確認する。
-            elements = driver.find_elements(*locator)
-
-            for element in elements:
-                if (
-                    element.is_displayed()
-                    and element.is_enabled()
-                ):
-                    print(
-                        "[SEARCH] 台番号入力欄描画完了"
-                    )
-                    return element
-
-            # 見つからなければトップとiframeを探索する。
-            driver.switch_to.default_content()
-
-            elements = driver.find_elements(*locator)
-
-            for element in elements:
-                if (
-                    element.is_displayed()
-                    and element.is_enabled()
-                ):
-                    print(
-                        "[SEARCH] 台番号入力欄描画完了"
-                    )
-                    return element
-
-            frames = driver.find_elements(
-                By.TAG_NAME,
-                "iframe",
-            )
-
-            for frame in frames:
-                try:
-                    driver.switch_to.default_content()
-                    driver.switch_to.frame(frame)
-
-                    elements = driver.find_elements(
-                        *locator
-                    )
-
-                    for element in elements:
-                        if (
-                            element.is_displayed()
-                            and element.is_enabled()
-                        ):
-                            print(
-                                "[SEARCH] 台番号入力欄描画完了"
-                                "（iframe内）"
-                            )
-                            return element
-
-                except Exception as exc:
-                    last_error = exc
-                    continue
-
-            driver.switch_to.default_content()
-
-        except Exception as exc:
-            last_error = exc
-
-        time.sleep(0.3)
-
-    driver.switch_to.default_content()
-
-    raise TimeoutException(
-        "台番号入力欄が"
-        f"{timeout}秒以内に描画されませんでした。"
-        f" last_error={last_error!r}"
-    )
-
-# ================
-#　ブラウザkidoukakuni
-# ================
-
-def get_chrome_process_info() -> dict[int, dict]:
-    """
-    現在動作しているChrome系プロセスを
-    PIDをキーにして取得する。
-    """
-    processes: dict[int, dict] = {}
-
-    for process in psutil.process_iter(
-        [
-            "pid",
-            "ppid",
-            "name",
-            "cmdline",
-            "create_time",
-        ]
-    ):
-        try:
-            name = (
-                process.info.get("name")
-                or ""
-            ).lower()
-
-            cmdline = process.info.get(
-                "cmdline"
-            ) or []
-
-            command_text = " ".join(
-                str(value)
-                for value in cmdline
-            )
-
-            lower_command = command_text.lower()
-
-            if not any(
-                keyword in name
-                or keyword in lower_command
-                for keyword in (
-                    "chrome",
-                    "chromium",
-                    "chromedriver",
-                    "uc_driver",
-                )
-            ):
-                continue
-
-            processes[process.pid] = {
-                "pid": process.pid,
-                "ppid": process.info.get("ppid"),
-                "name": process.info.get("name"),
-                "cmdline": command_text,
-                "create_time": process.info.get(
-                    "create_time"
-                ),
-            }
-
-        except (
-            psutil.NoSuchProcess,
-            psutil.AccessDenied,
-            psutil.ZombieProcess,
-        ):
-            continue
-
-    return processes
-
-# ================
-#　pyブラウザプロセス終了
-# ================
-def kill_browser_process_tree(
-    driver,
-) -> None:
-    """
-    このDriverが使用している専用profile_dirのChromeと、
-    対応するuc_driverだけを終了する。
-
-    手動Chromeや他スクリプトのChromeには影響しない。
-    """
-    print("[KILL] このブラウザのプロセス終了開始")
-
-    profile_dir = getattr(
-        driver,
-        "_detapachi_profile_dir",
-        None,
-    )
-
-    service = getattr(
-        driver,
-        "service",
-        None,
-    )
-
-    service_process = getattr(
-        service,
-        "process",
-        None,
-    )
-
-    driver_pid = getattr(
-        service_process,
-        "pid",
-        None,
-    )
-
-    print(
-        f"[KILL] 対象profile_dir="
-        f"{profile_dir}"
-    )
-
-    print(
-        f"[KILL] uc_driver PID="
-        f"{driver_pid}"
-    )
-
-    target_processes = []
-
-    if profile_dir:
-        for process in psutil.process_iter(
-            [
-                "pid",
-                "name",
-                "cmdline",
-            ]
-        ):
-            try:
-                command_text = " ".join(
-                    process.info.get("cmdline")
-                    or []
-                )
-
-                if profile_dir in command_text:
-                    target_processes.append(
-                        process
-                    )
-
-                    print(
-                        "[KILL] 対象検出: "
-                        f"PID={process.pid}, "
-                        f"name={process.info.get('name')}"
-                    )
-
-            except (
-                psutil.NoSuchProcess,
-                psutil.AccessDenied,
-                psutil.ZombieProcess,
-            ):
-                continue
-
-    print(
-        f"[KILL] profile一致プロセス数="
-        f"{len(target_processes)}"
-    )
-
-    # Chrome本体・子プロセスを終了
-    for process in reversed(
-        target_processes
-    ):
-        try:
-            process.kill()
-
-            print(
-                f"[KILL] 終了要求: "
-                f"PID={process.pid}"
-            )
-
-        except (
-            psutil.NoSuchProcess,
-            psutil.AccessDenied,
-        ):
-            pass
-
-    if target_processes:
-        gone, alive = psutil.wait_procs(
-            target_processes,
-            timeout=5,
-        )
-
-        print(
-            f"[KILL] 終了済み={len(gone)}, "
-            f"残存={len(alive)}"
-        )
-
-        for process in alive:
-            try:
-                process.kill()
-            except (
-                psutil.NoSuchProcess,
-                psutil.AccessDenied,
-            ):
-                pass
-
-    # 最後にuc_driverを終了
-    if driver_pid:
-        try:
-            driver_process = psutil.Process(
-                driver_pid
-            )
-
-            driver_process.kill()
-
-            print(
-                f"[KILL] uc_driver終了: "
-                f"PID={driver_pid}"
-            )
-
-        except psutil.NoSuchProcess:
-            print(
-                "[KILL] uc_driverは"
-                "すでに終了済み"
-            )
-
-        except psutil.AccessDenied as error:
-            print(
-                "[KILL] uc_driver終了権限エラー: "
-                f"{error}"
-            )
-
-    print(
-        "[KILL] このブラウザの"
-        "プロセス終了完了"
-    )
+HIST_RE = re.compile(
+    rf"^("
+    rf"{'|'.join(re.escape(name) for name in HISTORY_COLUMN_NAMES)}"
+    rf")(\d+)回前$"
+)
 
 # ======== バッチ開始時のナビ（既存の安定化） ========
 MAX_NAV_RETRY = site_config.MAX_NAV_RETRY
@@ -1671,22 +420,40 @@ def open_and_navigate_with_retry(
             )
 
             # ==========================================
-            # 台番号検索メニューをまず8秒待つ
+            # ブラウザ診断
+            # ==========================================
+            log_browser_diagnostics(
+                drv
+            )
+            
+            # ==========================================
+            # 実Request Headers診断
+            # ==========================================
+            log_request_headers(
+                drv,
+                "pscube.jp",
+            )
+
+
+
+
+            # ==========================================
+            # 台番号検索メニューをまず10秒待つ
             # ==========================================
             try:
                 print(
                     "[NAV] 台番号検索メニュー待機"
-                    "（最大8秒）"
+                    "（最大10秒）"
                 )
 
                 wait_search_menu_ready(
                     drv,
-                    timeout=8,
+                    timeout=10,
                 )
 
             except TimeoutException:
                 # ======================================
-                # 8秒以内に描画されなければ
+                # 10秒以内に描画されなければ
                 # 「スロットデータ」リンクをクリック
                 # ======================================
                 print(
@@ -1814,397 +581,7 @@ def open_and_navigate_with_retry(
     raise RuntimeError(
         f"ナビゲーションに失敗: {last_err}"
     )
-
-# ======== ★ 行ごとの“最小”再起動用（1回だけ） ========
-def ensure_on_target_or_raise(
-    driver,
-    target_url,
-    timeout=12,
-):
-    """
-    ページが生存しており、
-    台番号検索フォームを操作できるか確認する。
-    """
-    ready = driver.execute_script(
-        "return document.readyState"
-    )
-
-    if ready not in (
-        "interactive",
-        "complete",
-    ):
-        raise TimeoutException(
-            f"readyState={ready}"
-        )
-
-    current_host = urlparse(
-        driver.current_url
-    ).hostname
-
-    target_host = urlparse(
-        target_url
-    ).hostname
-
-    allowed_hosts = {
-        target_host,
-        f"www.{target_host}"
-        if target_host
-        and not target_host.startswith("www.")
-        else target_host,
-    }
-
-    if current_host not in allowed_hosts:
-        raise WebDriverException(
-            f"unexpected host: "
-            f"{driver.current_url}"
-        )
-
-    wait_search_menu_ready(
-        driver,
-        timeout=timeout,
-    )
-
-class SearchResultTimeoutError(TimeoutException):
-    """検索後、取得更新日要素を時間内に取得できなかった。"""
-
-
-def normalize_dai_number(value) -> str:
-    """台番号表記を比較用の数字文字列へ統一する。"""
-    match = re.search(r"\d+", str(value or ""))
-    if not match:
-        return ""
-    return str(int(match.group()))
-
-
-def normalize_update_date_text(text: str) -> str:
-    """取得更新日の表示文字列を YYYY/MM/DD HH:MM 形式へ正規化する。"""
-    value = str(text or "")
-    value = value.replace("\xa0", " ")
-    value = value.replace("\u3000", " ")
-    value = re.sub(r"\s+", " ", value)
-    value = re.sub(r"\s*更新\s*$", "", value)
-    return value.strip()
-
-
-def wait_for_update_date(
-    driver,
-    *,
-    dai_number,
-    timeout=60,
-) -> tuple[str, str]:
-    """
-    検索後、次の条件が両方成立するまで最大timeout秒待つ。
-
-    1. 取得更新日 #upYMDhms が空ではない
-    2. 表示台番号が検索台番号と一致する
-
-    Cloudflare確認画面が表示された場合は、
-    トップページおよびiframeを確認してログを出す。
-
-    Cloudflareが自動通過した場合はそのまま続行する。
-    一定時間残り続けた場合は例外を出す。
-
-    Returns
-    -------
-    tuple[str, str]
-        取得更新日の生文字列、画面上の台番号表示
-    """
-
-    expected_number = normalize_dai_number(
-        dai_number
-    )
-
-    deadline = time.time() + timeout
-
-    last_update_text = ""
-    last_display_text = ""
-    last_display_number = ""
-
-    # Cloudflareを最初に検出した時刻
-    cloudflare_started_at = None
-
-    # 同じiframe検出ログを何度も出さないため
-    cloudflare_logged = False
-
-    while time.time() < deadline:
-        try:
-            # ==========================================
-            # ブラウザクラッシュ・セッション切断確認
-            # ==========================================
-            driver.execute_script(
-                "return document.readyState"
-            )
-
-            # ==========================================
-            # Cloudflare確認
-            # ==========================================
-            cloudflare_detected = False
-
-            # ------------------------------------------
-            # トップページ確認
-            # ------------------------------------------
-            try:
-                driver.switch_to.default_content()
-
-                title = (
-                    driver.title
-                    or ""
-                ).lower()
-
-                body_text = (
-                    driver.find_element(
-                        By.TAG_NAME,
-                        "body",
-                    ).text
-                    or ""
-                ).lower()
-
-                if (
-                    "just a moment" in title
-                    or "verify you are human" in body_text
-                    or "cloudflare" in body_text
-                ):
-                    cloudflare_detected = True
-
-            except Exception:
-                pass
-
-            # ------------------------------------------
-            # iframe確認
-            # ------------------------------------------
-            try:
-                driver.switch_to.default_content()
-
-                frames = driver.find_elements(
-                    By.TAG_NAME,
-                    "iframe",
-                )
-
-                for frame_index, frame in enumerate(
-                    frames
-                ):
-                    try:
-                        frame_src = (
-                            frame.get_attribute(
-                                "src"
-                            )
-                            or ""
-                        ).lower()
-
-                        frame_title = (
-                            frame.get_attribute(
-                                "title"
-                            )
-                            or ""
-                        ).lower()
-
-                        if (
-                            "cloudflare" in frame_src
-                            or "challenge" in frame_src
-                            or "turnstile" in frame_src
-                            or "cloudflare" in frame_title
-                            or "challenge" in frame_title
-                            or "turnstile" in frame_title
-                        ):
-                            cloudflare_detected = True
-
-                            if not cloudflare_logged:
-                                print(
-                                    "[CLOUDFLARE] "
-                                    "Cloudflare iframeを検出: "
-                                    f"index={frame_index}, "
-                                    f"src={frame_src!r}, "
-                                    f"title={frame_title!r}"
-                                )
-
-                                cloudflare_logged = True
-
-                            break
-
-                    except Exception:
-                        continue
-
-            except Exception:
-                pass
-
-            finally:
-                try:
-                    driver.switch_to.default_content()
-                except Exception:
-                    pass
-
-            # ==========================================
-            # Cloudflare表示中
-            # ==========================================
-            if cloudflare_detected:
-                if cloudflare_started_at is None:
-                    cloudflare_started_at = (
-                        time.time()
-                    )
-
-                    print(
-                        "[CLOUDFLARE] "
-                        "Cloudflare確認画面を検出しました。"
-                        "自動通過を最大15秒待ちます"
-                    )
-
-                elapsed = (
-                    time.time()
-                    - cloudflare_started_at
-                )
-
-                if elapsed >= 15:
-                    raise RuntimeError(
-                        "Cloudflare確認画面が"
-                        "15秒以内に自動通過しませんでした"
-                    )
-
-                time.sleep(0.5)
-                continue
-
-            # ==========================================
-            # Cloudflareから通常ページへ戻った
-            # ==========================================
-            if cloudflare_started_at is not None:
-                print(
-                    "[CLOUDFLARE] "
-                    "Cloudflare自動通過を確認しました"
-                )
-
-                cloudflare_started_at = None
-                cloudflare_logged = False
-
-            # ==========================================
-            # 必ずトップ階層へ戻す
-            # ==========================================
-            driver.switch_to.default_content()
-
-            # ------------------------------
-            # 取得更新日
-            # ------------------------------
-            update_elements = (
-                driver.find_elements(
-                    By.ID,
-                    "upYMDhms",
-                )
-            )
-
-            if update_elements:
-                try:
-                    last_update_text = (
-                        update_elements[0]
-                        .get_attribute(
-                            "textContent"
-                        )
-                        or ""
-                    ).strip()
-
-                except Exception:
-                    last_update_text = ""
-
-            else:
-                last_update_text = ""
-
-            # ------------------------------
-            # 表示台番号
-            # ------------------------------
-            number_elements = (
-                driver.find_elements(
-                    By.CSS_SELECTOR,
-                    "h2.nc-text-align-left",
-                )
-            )
-
-            if number_elements:
-                try:
-                    last_display_text = (
-                        number_elements[0]
-                        .get_attribute(
-                            "textContent"
-                        )
-                        or ""
-                    ).strip()
-
-                    last_display_number = (
-                        normalize_dai_number(
-                            last_display_text
-                        )
-                    )
-
-                except Exception:
-                    last_display_text = ""
-                    last_display_number = ""
-
-            else:
-                last_display_text = ""
-                last_display_number = ""
-
-            # ==========================================
-            # 更新日あり + 台番号一致
-            # ==========================================
-            if (
-                last_update_text
-                and last_display_number
-                == expected_number
-            ):
-                print(
-                    "[SEARCH] 検索結果を確認: "
-                    f"台番号={expected_number}, "
-                    f"更新日時={last_update_text!r}, "
-                    f"台番号表示="
-                    f"{last_display_text!r}"
-                )
-
-                return (
-                    last_update_text,
-                    last_display_text,
-                )
-
-            # ==========================================
-            # 前の検索結果が残っている
-            # ==========================================
-            if (
-                last_display_number
-                and last_display_number
-                != expected_number
-            ):
-                print(
-                    "[SEARCH] 前の検索結果を表示中: "
-                    f"検索={expected_number}, "
-                    f"表示={last_display_number}"
-                )
-
-        # ==============================================
-        # Chromeクラッシュ等
-        # ==============================================
-        except WebDriverException:
-            raise
-
-        # ==============================================
-        # Cloudflareタイムアウト等
-        # ==============================================
-        except RuntimeError:
-            raise
-
-        # ==============================================
-        # DOM切替途中など
-        # ==============================================
-        except Exception:
-            pass
-
-        time.sleep(0.5)
-
-    # ==============================================
-    # 通常タイムアウト
-    # ==============================================
-    raise SearchResultTimeoutError(
-        f"検索後{timeout}秒以内に対象台番号の"
-        "取得更新日を確認できませんでした。"
-        f" expected={expected_number!r}"
-        f" displayed={last_display_number!r}"
-        f" display_text={last_display_text!r}"
-        f" update_text={last_update_text!r}"
-    )
+    
 
 # ========= メインループ =========
 batch_size = BATCH_SIZE
@@ -2233,7 +610,6 @@ if not cookie_files:
     )
 
 cookie_index = 0
-
 current_cookie_file = cookie_files[
     cookie_index
 ]
@@ -2253,6 +629,13 @@ for batch_start in range(
         total,
     )
 
+    # batchが変わってもCookieは変更しない。
+    # 現在のCookieをそのまま次のブラウザでも使用する。
+    print(
+        f"[COOKIE] 現在のCookie: "
+        f"{current_cookie_file}"
+    )
+
     proxy_url = resolve_proxy(
         batch_index=batch_start,
         mode=PROXY_MODE,
@@ -2260,20 +643,14 @@ for batch_start in range(
         rotate_every=PROXY_ROTATE_EVERY,
     )
 
-    print(
-        f"[INFO] Proxy for batch "
-        f"{batch_start}-{batch_end}: "
-        f"{proxy_url or '(none)'}"
-    )
-
     # ==================================================
     # HR01ルート設定
     # ==================================================
-
+    
     print(
         "[NET] HR01ルート設定"
     )
-
+    
     reset_hr01_route(
         hr01_interface=HR01_INTERFACE,
         hr01_gateway=HR01_GATEWAY,
@@ -2285,11 +662,6 @@ for batch_start in range(
     # ==================================================
 
     try:
-        print(
-            f"[COOKIE] 現在のCookie: "
-            f"{current_cookie_file}"
-        )
-
         browser = open_and_navigate_with_retry(
             proxy_url,
             target_site,
@@ -2482,19 +854,19 @@ for batch_start in range(
                     # --------------------------------------
                     # 検索実行
                     # --------------------------------------
-
+                    
                     print_step(
                         "検索ボタンクリック"
                     )
-
+                    
                     expected_number = normalize_dai_number(
                         dai_number
                     )
-
+                    
                     expected_param = (
                         f"cd_dai={int(expected_number):04d}"
                     )
-
+                    
                     browser.execute_script(
                         (
                             "arguments[0].scrollIntoView("
@@ -2503,7 +875,7 @@ for batch_start in range(
                         ),
                         target_button,
                     )
-
+                    
                     # ======================================
                     # 検索ボタンは1回だけクリックする
                     #
@@ -2513,24 +885,24 @@ for batch_start in range(
                     # 「クリックしたがURL遷移しない」場合には
                     # 再クリックしない。
                     # ======================================
-
+                    
                     try:
                         target_button.click()
-
+                    
                         print(
                             "[SEARCH] 通常クリック実行"
                         )
-
+                    
                     except Exception:
                         browser.execute_script(
                             "arguments[0].click();",
                             target_button,
                         )
-
+                    
                         print(
                             "[SEARCH] JSクリック実行"
                         )
-
+                    
                     # ======================================
                     # URL遷移を最大15秒待つ
                     #
@@ -2538,48 +910,48 @@ for batch_start in range(
                     # サイト側のレスポンスが遅い場合も
                     # 最大15秒そのまま待つ。
                     # ======================================
-
+                    
                     print(
                         "[SEARCH] "
                         "目的台番号のURL遷移待機"
                         "（最大15秒）"
                     )
-
+                    
                     click_success = False
                     click_deadline = time.time() + 15
-
+                    
                     last_url = ""
-
+                    
                     while time.time() < click_deadline:
                         try:
                             current_url = browser.current_url
-
+                    
                             last_url = current_url
-
+                    
                             if expected_param in current_url:
                                 click_success = True
-
+                    
                                 print(
                                     "[SEARCH] "
                                     "検索クリック成功確認: "
                                     f"{expected_param}"
                                 )
-
+                    
                                 print(
                                     "[SEARCH] 遷移後URL: "
                                     f"{current_url}"
                                 )
-
+                    
                                 break
-
+                    
                         except WebDriverException:
                             raise
-
+                    
                         except Exception:
                             pass
-
+                    
                         time.sleep(0.5)
-
+                    
                     # ======================================
                     # 15秒経過しても目的URLでなければ失敗
                     #
@@ -2590,20 +962,20 @@ for batch_start in range(
                     # 既存のブラウザ終了・HR01再起動処理へ
                     # 任せる。
                     # ======================================
-
+                    
                     if not click_success:
                         print(
                             "[SEARCH ERROR] "
                             "15秒以内に目的台番号のURLへ"
                             "遷移しませんでした"
                         )
-
+                    
                         print(
                             "[SEARCH ERROR] "
                             f"expected={expected_param!r}, "
                             f"current_url={last_url!r}"
                         )
-
+                    
                         raise RuntimeError(
                             "検索ボタンを1回クリックしましたが、"
                             "15秒以内に目的台番号のURLへ"
@@ -2611,16 +983,16 @@ for batch_start in range(
                             f" expected={expected_param!r}"
                             f" current_url={last_url!r}"
                         )
-
+                    
                     # --------------------------------------
                     # 検索結果待機
                     # --------------------------------------
-
+                    
                     print_step(
                         "取得更新日・表示台番号待機"
                         "（最大60秒）"
                     )
-
+                    
                     update_date, displayed_text = (
                         wait_for_update_date(
                             browser,
@@ -2633,13 +1005,13 @@ for batch_start in range(
                     # --------------------------------------
                     # もっと見る前の固定待機
                     # --------------------------------------
-
+                    
                     print(
-                        "[WAIT] もっと見るクリック前に8秒待機"
+                        "[WAIT] もっと見るクリック前に5秒待機"
                     )
-
-                    time.sleep(8)
-
+                    
+                    time.sleep(5)
+                    
                     # --------------------------------------
                     # もっと見る
                     # --------------------------------------
@@ -2651,7 +1023,7 @@ for batch_start in range(
                     more_click_count = click_more(
                         browser,
                         max_clicks=5,
-                        wait_after_click=10,
+                        wait_after_click=5,
                         change_timeout=10,
                     )
 
@@ -2865,13 +1237,9 @@ for batch_start in range(
                                 for cell in header_cells
                             ]
 
-                            # ここはパチとカラム違う
-                            wanted_columns = [
-                                "時刻",
-                                "スタート",
-                                "ステータス",
-                                "出玉pt",
-                            ]
+                            wanted_columns = list(
+                                HISTORY_COLUMNS.values()
+                            )
 
                             column_indexes = {
                                 name: next(
@@ -2939,7 +1307,9 @@ for batch_start in range(
                                 history_time = (
                                     get_cell_text(
                                         column_indexes[
-                                            "時刻"
+                                            HISTORY_COLUMNS[
+                                                "time"
+                                            ]
                                         ]
                                     )
                                     or None
@@ -2949,7 +1319,9 @@ for batch_start in range(
                                     to_int_or_none(
                                         get_cell_text(
                                             column_indexes[
-                                                "スタート"
+                                                HISTORY_COLUMNS[
+                                                    "game"
+                                                ]
                                             ]
                                         )
                                     )
@@ -2958,7 +1330,9 @@ for batch_start in range(
                                 history_status = (
                                     get_cell_text(
                                         column_indexes[
-                                            "ステータス"
+                                            HISTORY_COLUMNS[
+                                                "status"
+                                            ]
                                         ]
                                     )
                                     or None
@@ -2966,7 +1340,9 @@ for batch_start in range(
 
                                 if (
                                     column_indexes[
-                                        "出玉pt"
+                                        HISTORY_COLUMNS[
+                                            "output"
+                                        ]
                                     ]
                                     is not None
                                 ):
@@ -2974,7 +1350,9 @@ for batch_start in range(
                                         to_int_or_none(
                                             get_cell_text(
                                                 column_indexes[
-                                                    "出玉pt"
+                                                    HISTORY_COLUMNS[
+                                                        "output"
+                                                    ]
                                                 ]
                                             )
                                         )
@@ -2984,25 +1362,25 @@ for batch_start in range(
                                     history_output = None
 
                                 data_entry[
-                                    f"時刻"
+                                    f"{HISTORY_COLUMNS['time']}"
                                     f"{history_number}"
                                     f"回前"
                                 ] = history_time
 
                                 data_entry[
-                                    f"スタート"
+                                    f"{HISTORY_COLUMNS['game']}"
                                     f"{history_number}"
                                     f"回前"
                                 ] = history_game
 
                                 data_entry[
-                                    f"ステータス"
+                                    f"{HISTORY_COLUMNS['status']}"
                                     f"{history_number}"
                                     f"回前"
                                 ] = history_status
 
                                 data_entry[
-                                    f"出玉pt"
+                                    f"{HISTORY_COLUMNS['output']}"
                                     f"{history_number}"
                                     f"回前"
                                 ] = history_output
@@ -3010,11 +1388,13 @@ for batch_start in range(
                                 print(
                                     f"[HISTORY] "
                                     f"{history_number}回前 | "
-                                    f"時刻={history_time} | "
-                                    f"スタート={history_game} | "
-                                    f"ステータス="
+                                    f"{HISTORY_COLUMNS['time']}="
+                                    f"{history_time} | "
+                                    f"{HISTORY_COLUMNS['game']}="
+                                    f"{history_game} | "
+                                    f"{HISTORY_COLUMNS['status']}="
                                     f"{history_status} | "
-                                    f"出玉pt="
+                                    f"{HISTORY_COLUMNS['output']}="
                                     f"{history_output}"
                                 )
 
@@ -3147,45 +1527,45 @@ for batch_start in range(
                         f"{dai_number} "
                         "ブラウザ終了・HR01再起動"
                     )
-
+                    
                     # ======================================
                     # ブラウザ終了・HR01再起動
                     # ======================================
-
+                    
                     try:
                         print("[INFO] ブラウザプロセス終了開始")
-
+                    
                         kill_browser_process_tree(
                             browser
                         )
-
+                    
                         print("[INFO] ブラウザプロセス終了完了")
-
+                    
                         time.sleep(3)
-
+                    
                         # ----------------------------------
                         # HR01再起動前のIP確認
                         # ----------------------------------
-
+                    
                         print(
                             "[INFO] HR01再起動前の"
                             "グローバルIP確認開始"
                         )
-
+                    
                         before_hr01_ip = None
                         before_squid_ip = None
-
+                    
                         try:
                             before_hr01_ip = get_global_ip(
                                 HR01_INTERFACE,
                                 timeout=20,
                             )
-
+                    
                             print(
                                 "[INFO] 再起動前HR01グローバルIP: "
                                 f"{before_hr01_ip}"
                             )
-
+                    
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動前HR01グローバルIP"
@@ -3193,18 +1573,18 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-
+                    
                         try:
                             before_squid_ip = get_squid_ip(
                                 SQUID_PROXY,
                                 timeout=20,
                             )
-
+                    
                             print(
                                 "[INFO] 再起動前Squid経由IP: "
                                 f"{before_squid_ip}"
                             )
-
+                    
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動前Squid経由IP"
@@ -3212,15 +1592,15 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-
+                    
                         # ----------------------------------
                         # HR01再起動
                         # ----------------------------------
-
+                    
                         print(
                             "[INFO] HR01再起動開始"
                         )
-
+                    
                         reboot_hr01_sync(
                             tapo_username=TAPO_USERNAME,
                             tapo_password=TAPO_PASSWORD,
@@ -3229,63 +1609,50 @@ for batch_start in range(
                             hr01_gateway=HR01_GATEWAY,
                             squid_proxy=SQUID_PROXY,
                         )
-
+                    
                         print(
                             "[INFO] HR01再起動完了"
                         )
 
-                        # ----------------------------------
-                        # Cookie切替
-                        #
-                        # batchでは切り替えない。
-                        # HR01再起動が正常完了した時だけ
-                        # 次のCookieへ進める。
-                        # ----------------------------------
-
-                        previous_cookie_file = (
-                            current_cookie_file
-                        )
-
+                        # Cookieも次へ切り替え
                         cookie_index = (
                             cookie_index + 1
                         ) % len(cookie_files)
-
-                        current_cookie_file = (
-                            cookie_files[
-                                cookie_index
-                            ]
-                        )
-
+                        
+                        current_cookie_file = cookie_files[
+                            cookie_index
+                        ]
+                        
                         print(
-                            "[COOKIE] HR01再起動後Cookie切替: "
-                            f"{previous_cookie_file} "
-                            "-> "
+                            f"[COOKIE] HR01再起動後Cookie切替: "
                             f"{current_cookie_file}"
                         )
+                        
+                        
 
                         # ----------------------------------
                         # HR01再起動後のIP確認
                         # ----------------------------------
-
+                    
                         print(
                             "[INFO] 対象URLアクセス前の"
                             "グローバルIP確認開始"
                         )
-
+                    
                         after_hr01_ip = None
                         after_squid_ip = None
-
+                    
                         try:
                             after_hr01_ip = get_global_ip(
                                 HR01_INTERFACE,
                                 timeout=20,
                             )
-
+                    
                             print(
                                 "[INFO] 再起動後HR01グローバルIP: "
                                 f"{after_hr01_ip}"
                             )
-
+                    
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動後HR01グローバルIP"
@@ -3293,18 +1660,18 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-
+                    
                         try:
                             after_squid_ip = get_squid_ip(
                                 SQUID_PROXY,
                                 timeout=20,
                             )
-
+                    
                             print(
                                 "[INFO] 再起動後Squid経由IP: "
                                 f"{after_squid_ip}"
                             )
-
+                    
                         except Exception as ip_error:
                             print(
                                 "[WARN] 再起動後Squid経由IP"
@@ -3312,11 +1679,11 @@ for batch_start in range(
                                 f"{type(ip_error).__name__}: "
                                 f"{ip_error}"
                             )
-
+                    
                         # ----------------------------------
                         # IP変更判定
                         # ----------------------------------
-
+                    
                         if (
                             before_hr01_ip
                             and after_hr01_ip
@@ -3333,18 +1700,18 @@ for batch_start in range(
                                     "HR01グローバルIPは変更されていません: "
                                     f"{after_hr01_ip}"
                                 )
-
+                    
                         else:
                             print(
                                 "[IP CHANGE WARN] "
                                 "再起動前後のHR01 IPを両方取得できないため、"
                                 "IP変更を判定できません"
                             )
-
+                    
                         # ----------------------------------
                         # 再起動後の経路確認
                         # ----------------------------------
-
+                    
                         if (
                             after_hr01_ip
                             and after_squid_ip
@@ -3366,50 +1733,50 @@ for batch_start in range(
                                     f"[PROXY WARN] Squid: "
                                     f"{after_squid_ip}"
                                 )
-
+                    
                         # ----------------------------------
                         # ブラウザ再起動
                         # ----------------------------------
-
+                    
                         print(
                             "[INFO] ブラウザ再起動開始"
                         )
-
+                    
                         browser = open_and_navigate_with_retry(
                             proxy_url,
                             target_site,
                             current_cookie_file,
                         )
-
+                    
                         print(
                             "[INFO] ブラウザ再起動完了"
                         )
-
+                    
                         print(
                             f"[RETRY] 台番号 "
                             f"{dai_number} を再実行"
                         )
-
+                    
                         continue
-
+                    
                     except Exception as restart_error:
                         print(
                             "[RESTART ERROR] "
                             f"{type(restart_error).__name__}: "
                             f"{restart_error}"
                         )
-
+                    
                         break
 
         # ==================================================
         # 台番号ごとに必ずDB保存
         # ==================================================
-
+        
         finally:
             print_step(
                 "DB保存"
             )
-
+        
             try:
                 insert_scraping_row(
                     conn,
@@ -3418,7 +1785,7 @@ for batch_start in range(
                     DB_TODAY_SCHEMA,
                     HIST_RE,
                 )
-
+        
             except Exception as db_error:
                 print(
                     "[DB保存失敗] "
@@ -3426,19 +1793,19 @@ for batch_start in range(
                     f"{data_entry.get('SKU')} "
                     f"err={db_error!r}"
                 )
-
+        
             # ==============================================
             # 次の台番号検索まで待機
             #
             # DB保存まで完全に終了してから
             # 次の台の検索通信まで間隔を空ける。
             # ==============================================
-
+        
             print(
-                "[WAIT] 次の台まで15秒待機"
+                "[WAIT] 次の台まで8秒待機"
             )
-
-            time.sleep(15)
+            
+            time.sleep(8)
 
     # ==================================================
     # バッチ終了
@@ -3474,7 +1841,7 @@ for batch_start in range(
             f"{browser_error}"
         )
 
-    time.sleep(5)
+    time.sleep(20)
 
 
 conn.close()
